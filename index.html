@@ -267,12 +267,18 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   .ext-panel{display:none;}
   .phone{width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
   .notch{display:none;}
-  .statusbar{height:env(safe-area-inset-top,44px);padding-top:0;align-items:center;}
+  /* reserve the iOS system status-bar zone (clock/battery) so our UI never overlaps it */
+  .statusbar{height:env(safe-area-inset-top,44px);padding:0;align-items:center;}
   .statusbar .right{display:none;}
   #clock{opacity:0;}
-  .screen{top:calc(env(safe-area-inset-top,44px) + 6px);bottom:calc(64px + env(safe-area-inset-bottom,20px));}
-  .tabbar{height:calc(64px + env(safe-area-inset-bottom,20px));padding-bottom:env(safe-area-inset-bottom,20px);}
-  .toolbar{top:calc(env(safe-area-inset-top,44px) - 30px);}
+  /* our own tool buttons sit just BELOW the system status bar → fully tappable, no battery overlap */
+  .toolbar{top:calc(env(safe-area-inset-top,44px) + 6px);right:16px;}
+  /* the menu popover follows the tool buttons down */
+  .pop{top:calc(env(safe-area-inset-top,44px) + 44px);}
+  /* content starts below both the status bar and the tool-button row */
+  .screen{top:calc(env(safe-area-inset-top,44px) + 44px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
+  /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
+  .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
 }
 
 </style>
@@ -292,8 +298,9 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
     </div>
     <div class="pop" id="menuPop">
       <button onclick="openManage()">⚙︎ 管理 / 删除习惯</button>
-      <button onclick="exportData()">⬇︎ 导出数据 (备份)</button>
-      <button onclick="importData()">⬆︎ 导入数据 (恢复)</button>
+      <button onclick="exportData()">⬇︎ 导出数据 (备份到文件)</button>
+      <button onclick="shareCloud()">☁︎ 云端上传 (微信 / 飞书)</button>
+      <button onclick="importData()">⬆︎ 导入数据 (从文件恢复)</button>
       <button class="danger" onclick="resetAll()">⟲ 清空全部数据</button>
     </div>
 
@@ -400,20 +407,82 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
 
 <script>
 /* ============================================================
+   防黑屏:全局错误兜底。任何未捕获的 JS 错误都不再留下白/黑屏,
+   而是提示一键刷新,避免"打不开/黑屏"的体验。
+   ============================================================ */
+window.addEventListener('error',function(ev){
+  if(document.body&&document.body.getAttribute('data-crashed'))return;
+  // 仅当页面看起来空白时才兜底展示
+  var phone=document.getElementById('phone');
+  if(!phone)return;
+  document.body.setAttribute('data-crashed','1');
+  var m=document.createElement('div');
+  m.style.cssText='position:fixed;inset:0;z-index:9999;background:#F7F8FA;color:#33475B;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:-apple-system,sans-serif;padding:30px;text-align:center';
+  m.innerHTML='<div style="font-size:15px;line-height:1.6;margin-bottom:18px">页面遇到一个小问题,你的数据仍安全保存在本地。<br>点击下方按钮重新加载即可。</div><button style="border:none;background:#33475B;color:#fff;padding:12px 26px;border-radius:12px;font-size:15px" onclick="location.reload()">重新加载</button>';
+  document.body.appendChild(m);
+});
+/* ============================================================
    Data layer —— localStorage 本地持久化
    初始为空,示例数据需手动载入
    ============================================================ */
 const KEY='workbench_v1';
 const DEFAULT={
   habits:[],           // {id,name,icon,form:'flow'|'list'}
-  logs:{},             // habitId: [{date,duration,content,rating,atts:[dataURL],book:{title,author,cover,progress}}]
+  logs:{},             // habitId: [{date,duration,content,rating,atts:[dataURL],bookId}]
+  books:{},            // habitId: [{id,title,author,cover,progress}]  ← 阅读类书籍库,与打卡联动
   top5:[],             // {name,progress}
   diaries:[],          // {date,title,weather,mood,body,atts:[{type,url}]}
   theme:'light'
 };
 let DB=load();
-function load(){try{return Object.assign({},DEFAULT,JSON.parse(localStorage.getItem(KEY))||{})}catch(e){return JSON.parse(JSON.stringify(DEFAULT))}}
-function save(){localStorage.setItem(KEY,JSON.stringify(DB));}
+function load(){try{return migrate(Object.assign({},DEFAULT,JSON.parse(localStorage.getItem(KEY))||{}))}catch(e){return JSON.parse(JSON.stringify(DEFAULT))}}
+/* 兼容旧数据:把旧版内嵌 log.book 迁移成独立书籍库 + bookId 关联 */
+function migrate(db){
+  db.books=db.books||{};
+  for(const h of (db.habits||[])){
+    if(h.form!=='flow')continue;
+    db.books[h.id]=db.books[h.id]||[];
+    const byTitle={};db.books[h.id].forEach(b=>byTitle[b.title]=b);
+    for(const l of (db.logs[h.id]||[])){
+      if(l.bookId||!l.book||!l.book.title)continue;
+      let b=byTitle[l.book.title];
+      if(!b){b={id:uid(),title:l.book.title,author:l.book.author||'',cover:l.book.cover||'',progress:l.book.progress||0};db.books[h.id].push(b);byTitle[b.title]=b;}
+      else{if(l.book.progress)b.progress=l.book.progress;if(l.book.cover&&!b.cover)b.cover=l.book.cover;}
+      l.bookId=b.id;delete l.book;
+    }
+  }
+  return db;
+}
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){/* 配额满或隐私模式,静默 */}
+  idbBackup();          // 同时写入 IndexedDB 冗余备份(iOS 上比 localStorage 更不易被清空)
+}
+/* ---- IndexedDB 冗余备份层 ---- */
+/* iOS 主屏幕(standalone)模式下,localStorage 有可能被系统回收 / 与 Safari 隔离,
+   导致"重新添加书签后数据消失"。这里额外把数据镜像到 IndexedDB,
+   启动时若 localStorage 为空则自动从 IndexedDB 找回,双保险。 */
+let _idb=null;
+function idbOpen(){return new Promise((res,rej)=>{
+  if(_idb)return res(_idb);
+  if(!window.indexedDB)return rej('no-idb');
+  const q=indexedDB.open('workbench_db',1);
+  q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');};
+  q.onsuccess=e=>{_idb=e.target.result;res(_idb);};
+  q.onerror=e=>rej(e);
+});}
+function idbBackup(){idbOpen().then(db=>{db.transaction('kv','readwrite').objectStore('kv').put(JSON.stringify(DB),KEY);}).catch(()=>{});}
+function idbLoad(){return new Promise(res=>{idbOpen().then(db=>{const r=db.transaction('kv','readonly').objectStore('kv').get(KEY);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}).catch(()=>res(null));});}
+function dbIsEmpty(d){return (!d.habits||!d.habits.length)&&(!d.diaries||!d.diaries.length)&&Object.keys(d.logs||{}).length===0;}
+/* 启动时:若本地为空,尝试从 IndexedDB 冗余备份恢复 */
+function idbRestoreIfEmpty(){
+  if(!dbIsEmpty(DB))return;
+  idbLoad().then(js=>{
+    if(!js)return;
+    try{const d=migrate(Object.assign({},JSON.parse(JSON.stringify(DEFAULT)),JSON.parse(js)));
+      if(!dbIsEmpty(d)){DB=d;save();applyTheme();renderDashboard();renderHabits();renderDiary();toast('已从本地备份自动找回数据');}
+    }catch(e){}
+  });
+}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 const today=()=>new Date().toISOString().slice(0,10);
 
@@ -561,17 +630,29 @@ function renderHabits(){
     <div class="big">${tlog?(tlog.duration||0)+' min':'未打卡'}</div>
     <button class="checkbtn" onclick="openLogEditor('${h.id}')">＋ 今日打卡</button></div>`;
   if(h.form==='flow'){
-    // reading style: currently reading + finished books
-    const cur=tlog&&tlog.book?tlog.book:null;
-    html+=`<div class="card"><div class="h2">当天进展</div>`;
-    if(logs.length){const last=logs[0];html+=`<div style="font-size:14px;color:var(--text-2);line-height:1.5">${last.date} · ${last.duration||0}min${last.content?' · '+last.content:''}</div>`;}
-    else html+=`<div class="empty" style="padding:12px"><p>今天还没有记录</p></div>`;
+    // reading style: 当前在读(可编辑+快速打卡) + 历史书籍(可编辑进度)
+    const books=DB.books[h.id]||[];
+    // 累计每本书投入时长
+    const timeByBook={};for(const l of (DB.logs[h.id]||[])){if(l.bookId)timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);}
+    const reading=books.filter(b=>(b.progress||0)<100);
+    const finished=books.filter(b=>(b.progress||0)>=100);
+    // —— 当前在读 ——
+    html+=`<div class="card"><div class="h2">当前在读<span class="link" onclick="openBookEditor('${h.id}','')">＋ 添加</span></div>`;
+    if(reading.length){
+      html+=reading.map(b=>`<div class="tlist-item" style="align-items:center">
+        <div class="thumb">${b.cover?`<img src="${b.cover}">`:'📖'}</div>
+        <div class="info"><div class="mt">${b.title}</div>
+          <div class="st">${b.author||'—'} · 累计 ${((timeByBook[b.id]||0)/60).toFixed(1)}h · ${b.progress||0}%</div>
+          <div class="prog-track" style="margin-top:6px"><div class="prog-fill" style="width:${b.progress||0}%"></div></div></div>
+        <button class="btn ghost sm" style="width:auto;padding:6px 10px;margin:0 0 0 8px" onclick="quickCheck('${h.id}','${b.id}')">打卡</button>
+        <button class="btn ghost sm" style="width:auto;padding:6px 10px;margin:0 0 0 6px" onclick="openBookEditor('${h.id}','${b.id}')">编辑</button>
+      </div>`).join('');
+    }else html+=`<div class="empty" style="padding:12px"><p>点右上「＋ 添加」登记在读的书,或今日打卡时新建</p></div>`;
     html+=`</div>`;
-    const books={};logs.forEach(l=>{if(l.book&&l.book.title){books[l.book.title]=books[l.book.title]||{...l.book,time:0};books[l.book.title].time+=Number(l.duration)||0;if(l.book.progress)books[l.book.title].progress=l.book.progress;}});
-    const arr=Object.values(books);
+    // —— 历史书籍(读完) ——
     html+=`<div class="card"><div class="h2">历史书籍</div>`;
-    if(arr.length){html+=`<div class="book-grid">${arr.map(b=>`<div class="book"><div class="cover">${b.cover?`<img src="${b.cover}">`:'📖'}</div><div class="bt">${b.title}</div><div class="ba">${b.author||'—'} · ${(b.time/60).toFixed(1)}h</div><div class="prog-track"><div class="prog-fill" style="width:${b.progress||0}%"></div></div></div>`).join('')}</div>`;}
-    else html+=`<div class="empty" style="padding:12px"><p>打卡时填写书名/作者/封面即可在此展示</p></div>`;
+    if(finished.length){html+=`<div class="book-grid">${finished.map(b=>`<div class="book" onclick="openBookEditor('${h.id}','${b.id}')"><div class="cover">${b.cover?`<img src="${b.cover}">`:'📖'}</div><div class="bt">${b.title}</div><div class="ba">${b.author||'—'} · ${((timeByBook[b.id]||0)/60).toFixed(1)}h</div><div class="prog-track"><div class="prog-fill" style="width:100%"></div></div></div>`).join('')}</div>`;}
+    else html+=`<div class="empty" style="padding:12px"><p>进度达到 100% 的书会归档到这里,点书可再次编辑</p></div>`;
     html+=`</div>`;
   }else{
     // fitness style: task list
@@ -583,35 +664,62 @@ function renderHabits(){
   main.innerHTML=html;
 }
 function selectHabit(id){activeHabit=id;renderHabits();}
-function openHabitEditor(){
-  openSheet(`<h3>新建习惯</h3>
-    <div class="field"><label>名称</label><input type="text" id="hName" placeholder="如:阅读 / 健身 / 红酒品鉴"></div>
-    <div class="field"><label>图标 (emoji)</label><input type="text" id="hIcon" placeholder="📖" maxlength="2"></div>
+const EMOJI_PICK=['📖','🏋️','💄','🗣️','🧠','☕','🍷','🏃','🧘','🎨','🎹','📷','✍️','🌱','💊','💧','🎯','⭐'];
+function openHabitEditor(editId){
+  const h=editId?DB.habits.find(x=>x.id===editId):null;
+  const cur=h?h.icon:'📖';
+  openSheet(`<h3>${h?'编辑习惯':'新建习惯'}</h3>
+    <div class="field"><label>名称</label><input type="text" id="hName" placeholder="如:阅读 / 健身 / 红酒品鉴" value="${h?h.name.replace(/"/g,'&quot;'):''}"></div>
+    <div class="field"><label>图标 (emoji)</label>
+      <input type="text" id="hIcon" placeholder="点选或直接粘贴 emoji" value="${h?h.icon:''}" style="font-size:20px">
+      <div id="emojiPick" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${EMOJI_PICK.map(e=>`<span onclick="pickEmoji('${e}')" style="cursor:pointer;font-size:24px;padding:4px 6px;border-radius:8px;background:${e===cur?'var(--accent)':'var(--bg-base)'}">${e}</span>`).join('')}</div></div>
     <div class="field"><label>下方呈现形态</label>
-      <select id="hForm"><option value="flow">图片信息流(适合阅读/收藏)</option><option value="list">任务清单(适合健身/打卡)</option></select></div>
-    <button class="btn" onclick="saveHabit()">创建</button>`);
+      <select id="hForm" ${h?'disabled title="形态创建后不可更改"':''}>
+        <option value="flow" ${h&&h.form==='flow'?'selected':''}>图片信息流(适合阅读/收藏)</option>
+        <option value="list" ${h&&h.form==='list'?'selected':''}>任务清单(适合健身/打卡)</option></select></div>
+    <button class="btn" onclick="saveHabit('${editId||''}')">${h?'保存修改':'创建'}</button>`);
 }
-function saveHabit(){
+function pickEmoji(e){document.getElementById('hIcon').value=e;document.querySelectorAll('#emojiPick span').forEach(s=>s.style.background=s.textContent===e?'var(--accent)':'var(--bg-base)');}
+function saveHabit(editId){
   const name=document.getElementById('hName').value.trim();if(!name){toast('请填写名称');return;}
-  DB.habits.push({id:uid(),name,icon:document.getElementById('hIcon').value.trim()||'✦',form:document.getElementById('hForm').value});
-  save();closeSheet(true);renderHabits();toast('习惯已创建');
+  const icon=document.getElementById('hIcon').value.trim()||'✦';
+  if(editId){const h=DB.habits.find(x=>x.id===editId);if(h){h.name=name;h.icon=icon;}}
+  else DB.habits.push({id:uid(),name,icon,form:document.getElementById('hForm').value});
+  save();closeSheet(true);renderHabits();toast(editId?'习惯已更新':'习惯已创建');
 }
 let logAtts=[],logCover='';
-function openLogEditor(hid){
+function openLogEditor(hid,preBookId){
   const h=DB.habits.find(x=>x.id===hid);logAtts=[];logCover='';
   const isFlow=h.form==='flow';
+  const books=DB.books[hid]||[];
+  const tlog=(DB.logs[hid]||[]).find(l=>l.date===today());
+  const bookId=preBookId||(tlog&&tlog.bookId)||(books.find(b=>(b.progress||0)<100)||{}).id||'';
+  const selBook=books.find(b=>b.id===bookId);
   openSheet(`<h3>${h.icon} ${h.name} · 今日打卡</h3>
-    <div class="field"><label>投入时间(分钟)</label>
+    ${isFlow?`<div class="field"><label>选择书籍</label>
+      <select id="lBookSel" onchange="onLogBookChange('${hid}')">
+        ${books.map(b=>`<option value="${b.id}" ${b.id===bookId?'selected':''}>${b.title}${(b.progress||0)>=100?' ✓已读完':''}</option>`).join('')}
+        <option value="__new">＋ 新增一本书…</option>
+      </select></div>
+      <div id="newBookBox" style="display:${books.length?'none':'block'}">
+        <div class="field"><label>书名</label><input type="text" id="lBookT" placeholder="书名"></div>
+        <div class="field"><label>作者</label><input type="text" id="lBookA" placeholder="作者"></div>
+        <div class="field"><label>封面</label><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>封面<input type="file" accept="image/*" onchange="readCover(this)"><span id="coverPrev"></span></div></div>
+      </div>
+      <div class="field"><label>阅读进度 %(打卡后自动更新到该书)</label>
+        <input type="number" id="lBookP" min="0" max="100" value="${selBook?selBook.progress||0:0}" placeholder="0-100"></div>`:''}
+    <div class="field"><label>投入时间(分钟)${isFlow?'　·　只改时间也可完成打卡':''}</label>
       <div class="stepper"><button onclick="stepDur(-5)">−</button><input type="number" id="lDur" value="30"><button onclick="stepDur(5)">＋</button></div></div>
     <div class="field"><label>内容 / 备注</label><textarea id="lContent" placeholder="${isFlow?'读了哪部分、收获…':'练了什么、体验如何…'}"></textarea></div>
-    ${isFlow?`<div class="field"><label>正在读的书(选填)</label>
-      <input type="text" id="lBookT" placeholder="书名" style="margin-bottom:8px">
-      <input type="text" id="lBookA" placeholder="作者" style="margin-bottom:8px">
-      <input type="number" id="lBookP" placeholder="阅读进度 %" min="0" max="100" style="margin-bottom:8px">
-      <label>书籍封面</label><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>封面<input type="file" accept="image/*" onchange="readCover(this)"><span id="coverPrev"></span></div></div>`:''}
     <div class="field"><label>今日评分</label><div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span class="s" data-v="${i}" onclick="setStar(${i})">★</span>`).join('')}</div></div>
     <div class="field"><label>上传附件(图片)</label><div class="att-row" id="attRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>照片<input type="file" accept="image/*" multiple onchange="readAtts(this)"></div></div></div>
     <button class="btn" onclick="saveLog('${hid}')">保存打卡</button>`);
+}
+function onLogBookChange(hid){
+  const sel=document.getElementById('lBookSel');const box=document.getElementById('newBookBox');
+  const isNew=sel.value==='__new';box.style.display=isNew?'block':'none';
+  const b=(DB.books[hid]||[]).find(x=>x.id===sel.value);
+  if(b&&!isNew)document.getElementById('lBookP').value=b.progress||0;
 }
 function stepDur(d){const el=document.getElementById('lDur');el.value=Math.max(0,(+el.value||0)+d);}
 let curStar=0;function setStar(v){curStar=v;document.querySelectorAll('#stars .s').forEach(s=>s.classList.toggle('on',+s.dataset.v<=v));}
@@ -621,11 +729,53 @@ function renderAttRow(){const row=document.getElementById('attRow');row.querySel
 function saveLog(hid){
   const h=DB.habits.find(x=>x.id===hid);
   const log={date:today(),duration:+document.getElementById('lDur').value||0,content:document.getElementById('lContent').value.trim(),rating:curStar,atts:logAtts.slice()};
-  if(h.form==='flow'){const t=document.getElementById('lBookT').value.trim();if(t)log.book={title:t,author:document.getElementById('lBookA').value.trim(),progress:+document.getElementById('lBookP').value||0,cover:logCover};}
+  if(h.form==='flow'){
+    DB.books[hid]=DB.books[hid]||[];
+    const sel=document.getElementById('lBookSel');let bookId=sel?sel.value:'';
+    const prog=Math.max(0,Math.min(100,+document.getElementById('lBookP').value||0));
+    if(bookId==='__new'||(!bookId&&document.getElementById('lBookT'))){
+      const t=(document.getElementById('lBookT')||{}).value?document.getElementById('lBookT').value.trim():'';
+      if(t){const nb={id:uid(),title:t,author:(document.getElementById('lBookA')||{}).value?document.getElementById('lBookA').value.trim():'',cover:logCover,progress:prog};DB.books[hid].push(nb);bookId=nb.id;}
+      else bookId='';
+    }else if(bookId){
+      const b=DB.books[hid].find(x=>x.id===bookId);if(b)b.progress=prog;   // ← 打卡回写书籍进度,实现联动
+    }
+    if(bookId)log.bookId=bookId;
+  }
   DB.logs[hid]=DB.logs[hid]||[];
   const ex=DB.logs[hid].findIndex(l=>l.date===today());
   if(ex>=0)DB.logs[hid][ex]=log;else DB.logs[hid].push(log);
-  curStar=0;save();closeSheet(true);renderHabits();toast('✓ 今日已点亮日历');
+  curStar=0;save();closeSheet(true);renderHabits();renderDashboard();toast('✓ 今日已点亮日历');
+}
+/* 快速打卡:从「当前在读」某本书直接进入,预选该书 */
+function quickCheck(hid,bookId){openLogEditor(hid,bookId);}
+/* 书籍编辑:新增 / 修改书名·作者·封面·进度;进度=100 自动归档到历史书籍 */
+function openBookEditor(hid,bookId){
+  const books=DB.books[hid]||[];const b=bookId?books.find(x=>x.id===bookId):null;
+  openSheet(`<h3>${b?'编辑书籍':'添加书籍'}</h3>
+    <div class="field"><label>书名</label><input type="text" id="bkT" value="${b?b.title.replace(/"/g,'&quot;'):''}" placeholder="书名"></div>
+    <div class="field"><label>作者</label><input type="text" id="bkA" value="${b?(b.author||'').replace(/"/g,'&quot;'):''}" placeholder="作者"></div>
+    <div class="field"><label>阅读进度 %</label><input type="number" id="bkP" min="0" max="100" value="${b?b.progress||0:0}"></div>
+    <div class="field"><label>封面</label><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>封面<input type="file" accept="image/*" onchange="readBookCover(this)"><span id="bkCoverPrev">${b&&b.cover?`<img src="${b.cover}">`:''}</span></div></div>
+    <button class="btn" onclick="saveBook('${hid}','${bookId||''}')">${b?'保存':'添加'}</button>
+    ${b?`<button class="btn danger sm" style="width:100%;margin-top:10px" onclick="delBook('${hid}','${bookId}')">删除这本书</button>`:''}`);
+  bookCover=b&&b.cover?b.cover:'';
+}
+let bookCover='';
+function readBookCover(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{bookCover=e.target.result;document.getElementById('bkCoverPrev').innerHTML=`<img src="${bookCover}">`;};r.readAsDataURL(f);}
+function saveBook(hid,bookId){
+  const t=document.getElementById('bkT').value.trim();if(!t){toast('请填写书名');return;}
+  const a=document.getElementById('bkA').value.trim();const p=Math.max(0,Math.min(100,+document.getElementById('bkP').value||0));
+  DB.books[hid]=DB.books[hid]||[];
+  if(bookId){const b=DB.books[hid].find(x=>x.id===bookId);if(b){b.title=t;b.author=a;b.progress=p;if(bookCover)b.cover=bookCover;}}
+  else DB.books[hid].push({id:uid(),title:t,author:a,progress:p,cover:bookCover});
+  bookCover='';save();closeSheet(true);renderHabits();toast(bookId?'书籍已更新':'书籍已添加');
+}
+function delBook(hid,bookId){
+  if(!confirm('删除这本书?已有的打卡时长记录会保留,但不再关联书籍。'))return;
+  DB.books[hid]=(DB.books[hid]||[]).filter(b=>b.id!==bookId);
+  (DB.logs[hid]||[]).forEach(l=>{if(l.bookId===bookId)delete l.bookId;});
+  save();closeSheet(true);renderHabits();toast('已删除');
 }
 
 /* ============================================================
@@ -658,43 +808,49 @@ function expandDiary(idx){
     <div class="dmeta" style="font-size:13px;color:var(--text-3);margin-bottom:14px">${d.date} · ${d.weather||''}</div>
     <div style="font-size:15px;line-height:1.7;white-space:pre-wrap;margin-bottom:16px">${(d.body||'').replace(/</g,'&lt;')}</div>
     ${d.atts&&d.atts.length?`<div class="att-row">${d.atts.map(a=>a.type==='image'?`<div class="att-thumb"><img src="${a.url}"></div>`:`<div class="upload">${a.type==='video'?'🎬':'🎵'}</div>`).join('')}</div>`:''}
-    <button class="btn danger sm" style="width:100%;margin-top:16px" onclick="DB.diaries.splice(${idx},1);save();closeSheet(true);renderDiary();toast('已删除')">删除这篇</button>`);
+    <button class="btn" style="width:100%;margin-top:16px" onclick="openDiaryEditor(${idx})">✎ 编辑这篇</button>
+    <button class="btn danger sm" style="width:100%;margin-top:10px" onclick="DB.diaries.splice(${idx},1);save();closeSheet(true);renderDiary();toast('已删除')">删除这篇</button>`);
 }
-function openDiaryEditor(){
-  diaryAtts=[];
+function openDiaryEditor(idx){
+  const editing=(typeof idx==='number');
+  const d=editing?DB.diaries[idx]:null;
+  diaryAtts=editing&&d.atts?d.atts.slice():[];
+  curMood=editing?(d.mood||''):'';
   const moods=['😄','🙂','😐','😔','😤','🤔','😴'];
-  openSheet(`<h3>写日记</h3>
-    <div class="field"><label>标题</label><input type="text" id="dTitle" placeholder="今天的标题"></div>
-    <div class="field" style="display:flex;gap:8px"><div style="flex:1"><label>日期</label><input type="text" id="dDate" value="${today()}"></div><div style="flex:1"><label>天气</label><input type="text" id="dWeather" placeholder="☀️ 晴 / 🌧 雨"></div></div>
-    <div class="field"><label>心情</label><div class="stars" id="moodRow" style="font-size:24px">${moods.map(m=>`<span data-m="${m}" onclick="setMood('${m}',this)" style="cursor:pointer;opacity:.4">${m}</span>`).join('')}</div></div>
-    <div class="field"><label>正文</label><textarea id="dBody" style="min-height:120px" placeholder="今天的所思所想、认知迭代…"></textarea></div>
+  openSheet(`<h3>${editing?'编辑日记':'写日记'}</h3>
+    <div class="field"><label>标题</label><input type="text" id="dTitle" placeholder="今天的标题" value="${editing?(d.title||'').replace(/"/g,'&quot;'):''}"></div>
+    <div class="field" style="display:flex;gap:8px"><div style="flex:1"><label>日期</label><input type="text" id="dDate" value="${editing?d.date:today()}"></div><div style="flex:1"><label>天气</label><input type="text" id="dWeather" placeholder="☀️ 晴 / 🌧 雨" value="${editing?(d.weather||'').replace(/"/g,'&quot;'):''}"></div></div>
+    <div class="field"><label>心情</label><div class="stars" id="moodRow" style="font-size:24px">${moods.map(m=>`<span data-m="${m}" onclick="setMood('${m}',this)" style="cursor:pointer;opacity:${editing&&d.mood===m?'1':'.4'}">${m}</span>`).join('')}</div></div>
+    <div class="field"><label>正文</label><textarea id="dBody" style="min-height:120px" placeholder="今天的所思所想、认知迭代…">${editing?(d.body||'').replace(/</g,'&lt;'):''}</textarea></div>
     <div class="field"><label>附件(图片/视频/音频)</label><div class="att-row" id="dAttRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>附件<input type="file" accept="image/*,video/*,audio/*" multiple onchange="readDiaryAtts(this)"></div></div></div>
-    <button class="btn" onclick="saveDiary()">保存日记</button>`);
+    <button class="btn" onclick="saveDiary(${editing?idx:''})">${editing?'保存修改':'保存日记'}</button>`);
+  renderDiaryAtt();
 }
 let curMood='';
 function setMood(m,el){curMood=m;document.querySelectorAll('#moodRow span').forEach(s=>s.style.opacity=s===el?'1':'.4');}
 function readDiaryAtts(inp){[...inp.files].forEach(f=>{const type=f.type.startsWith('image')?'image':f.type.startsWith('video')?'video':'audio';const r=new FileReader();r.onload=e=>{diaryAtts.push({type,url:e.target.result});renderDiaryAtt();};r.readAsDataURL(f);});}
-function renderDiaryAtt(){const row=document.getElementById('dAttRow');row.querySelectorAll('.att-thumb,.att-file').forEach(x=>x.remove());diaryAtts.forEach((a,i)=>{const d=document.createElement('div');d.className='att-thumb';d.innerHTML=(a.type==='image'?`<img src="${a.url}">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg-base);font-size:22px">${a.type==='video'?'🎬':'🎵'}</div>`)+`<div class="del" onclick="diaryAtts.splice(${i},1);renderDiaryAtt()">✕</div>`;row.appendChild(d);});}
-function saveDiary(){
+function renderDiaryAtt(){const row=document.getElementById('dAttRow');if(!row)return;row.querySelectorAll('.att-thumb,.att-file').forEach(x=>x.remove());diaryAtts.forEach((a,i)=>{const d=document.createElement('div');d.className='att-thumb';d.innerHTML=(a.type==='image'?`<img src="${a.url}">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg-base);font-size:22px">${a.type==='video'?'🎬':'🎵'}</div>`)+`<div class="del" onclick="diaryAtts.splice(${i},1);renderDiaryAtt()">✕</div>`;row.appendChild(d);});}
+function saveDiary(idx){
   const title=document.getElementById('dTitle').value.trim();const body=document.getElementById('dBody').value.trim();
   if(!title&&!body){toast('写点什么吧');return;}
-  DB.diaries.push({date:document.getElementById('dDate').value||today(),title,weather:document.getElementById('dWeather').value.trim(),mood:curMood,body,atts:diaryAtts.slice()});
-  curMood='';save();closeSheet(true);renderDiary();toast('日记已保存');
+  const rec={date:document.getElementById('dDate').value||today(),title,weather:document.getElementById('dWeather').value.trim(),mood:curMood,body,atts:diaryAtts.slice()};
+  if(typeof idx==='number')DB.diaries[idx]=rec;else DB.diaries.push(rec);
+  curMood='';diaryAtts=[];save();closeSheet(true);renderDiary();toast(typeof idx==='number'?'日记已更新':'日记已保存');
 }
 
 /* ============================================================
    MANAGE / DELETE  (删除窗口)
    ============================================================ */
 function openManage(){
-  const rows=DB.habits.map((h,i)=>`<div class="manage-item"><div class="ico">${h.icon}</div><div class="nm">${h.name}<div class="form-tag">${h.form==='flow'?'图片信息流':'任务清单'}</div></div><button class="del" onclick="delHabit('${h.id}')">删除</button></div>`).join('');
-  openSheet(`<h3>管理 / 删除习惯</h3>
+  const rows=DB.habits.map((h,i)=>`<div class="manage-item"><div class="ico">${h.icon}</div><div class="nm">${h.name}<div class="form-tag">${h.form==='flow'?'图片信息流':'任务清单'}</div></div><button class="del" style="background:var(--bg-base);color:var(--accent);margin-right:6px" onclick="openHabitEditor('${h.id}')">编辑</button><button class="del" onclick="delHabit('${h.id}')">删除</button></div>`).join('');
+  openSheet(`<h3>管理 / 编辑 / 删除习惯</h3>
     ${DB.habits.length?rows:'<div class="empty" style="padding:20px"><p>暂无习惯模块</p></div>'}
     <button class="btn ghost" style="margin-top:12px" onclick="openHabitEditor()">＋ 新建习惯</button>
-    <p style="font-size:12px;color:var(--text-3);margin-top:14px;text-align:center">删除习惯将同时清除其打卡记录,请谨慎操作</p>`);
+    <p style="font-size:12px;color:var(--text-3);margin-top:14px;text-align:center">「编辑」可改名称与 emoji 图标;删除习惯将同时清除其打卡记录</p>`);
 }
 function delHabit(id){
   if(!confirm('确认删除该习惯及其全部打卡记录?'))return;
-  DB.habits=DB.habits.filter(h=>h.id!==id);delete DB.logs[id];if(activeHabit===id)activeHabit=null;
+  DB.habits=DB.habits.filter(h=>h.id!==id);delete DB.logs[id];delete DB.books[id];if(activeHabit===id)activeHabit=null;
   save();openManage();renderHabits();toast('已删除');
 }
 
@@ -702,15 +858,41 @@ function delHabit(id){
    BACKUP —— export / import / reset (本地+可迁移)
    ============================================================ */
 function exportData(){
+  const name='workbench-backup-'+today()+'.json';
   const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='workbench-backup-'+today()+'.json';a.click();toast('已导出备份文件');
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
+  localStorage.setItem('last_backup',today());
+  toast('已导出备份文件');
+}
+/* 云端上传:通过系统分享面板发送到微信 / 飞书等 */
+async function shareCloud(){
+  const name='workbench-backup-'+today()+'.json';
+  const json=JSON.stringify(DB,null,2);
+  const blob=new Blob([json],{type:'application/json'});
+  try{
+    const file=new File([blob],name,{type:'application/json'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:'工作台数据备份',text:'工作台数据备份 '+today()});
+      localStorage.setItem('last_backup',today());toast('已调起分享,可发送到微信/飞书');return;
+    }
+    if(navigator.share){ // 不支持文件时退化为分享文本
+      await navigator.share({title:'工作台数据备份',text:json});
+      localStorage.setItem('last_backup',today());toast('已调起分享');return;
+    }
+  }catch(e){if(e&&e.name==='AbortError')return;/* 用户取消 */}
+  // 完全不支持分享:退化为下载,提示手动上传
+  exportData();toast('当前环境不支持直接分享,已导出文件,请手动上传到微信/飞书');
 }
 function importData(){
-  const inp=document.createElement('input');inp.type='file';inp.accept='.json';
-  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{DB=Object.assign({},DEFAULT,JSON.parse(e.target.result));save();applyTheme();renderDashboard();renderHabits();renderDiary();toast('已恢复数据');}catch(err){toast('文件格式错误');}};r.readAsText(f);};
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{
+    const parsed=JSON.parse(e.target.result);
+    DB=migrate(Object.assign({},JSON.parse(JSON.stringify(DEFAULT)),parsed));
+    save();applyTheme();renderDashboard();renderHabits();renderDiary();toast('已导入并写入本地存储');
+  }catch(err){toast('文件格式错误,导入失败');}};r.readAsText(f);};
   inp.click();
 }
-function resetAll(){if(!confirm('确认清空全部数据?此操作不可撤销。'))return;DB=JSON.parse(JSON.stringify(DEFAULT));save();applyTheme();activeHabit=null;renderDashboard();renderHabits();renderDiary();toast('已清空,回到初始态');}
+function resetAll(){if(!confirm('确认清空全部数据?此操作不可撤销。建议先「导出数据」备份。'))return;DB=JSON.parse(JSON.stringify(DEFAULT));save();applyTheme();activeHabit=null;renderDashboard();renderHabits();renderDiary();toast('已清空,回到初始态');}
 
 /* ============================================================
    DEMO data (手动载入)
@@ -721,7 +903,9 @@ function loadDemo(){
   DB.habits=[{id:rd,name:'阅读',icon:'📖',form:'flow'},{id:ft,name:'健身',icon:'🏋️',form:'list'},{id:lang,name:'语言表达',icon:'🗣️',form:'list'}];
   const now=new Date();
   function dstr(off){const d=new Date(now);d.setDate(now.getDate()-off);return d.toISOString().slice(0,10);}
-  DB.logs[rd]=[{date:dstr(0),duration:45,content:'读《思考,快与慢》第 3 章',rating:4,atts:[],book:{title:'思考,快与慢',author:'卡尼曼',progress:62,cover:''}},{date:dstr(2),duration:30,content:'系统 1 与系统 2',rating:4,atts:[],book:{title:'思考,快与慢',author:'卡尼曼',progress:45,cover:''}},{date:dstr(5),duration:60,content:'读完《原则》',rating:5,atts:[],book:{title:'原则',author:'达利欧',progress:100,cover:''}}];
+  const bk1=uid(),bk2=uid();
+  DB.books[rd]=[{id:bk1,title:'思考,快与慢',author:'卡尼曼',progress:62,cover:''},{id:bk2,title:'原则',author:'达利欧',progress:100,cover:''}];
+  DB.logs[rd]=[{date:dstr(0),duration:45,content:'读《思考,快与慢》第 3 章',rating:4,atts:[],bookId:bk1},{date:dstr(2),duration:30,content:'系统 1 与系统 2',rating:4,atts:[],bookId:bk1},{date:dstr(5),duration:60,content:'读完《原则》',rating:5,atts:[],bookId:bk2}];
   DB.logs[ft]=[{date:dstr(0),duration:50,content:'胸 + 三头,状态不错',rating:4,atts:[]},{date:dstr(1),duration:40,content:'有氧跑步 5km',rating:3,atts:[]},{date:dstr(3),duration:60,content:'腿部训练',rating:4,atts:[]}];
   DB.logs[lang]=[{date:dstr(0),duration:20,content:'英语口语练习',rating:3,atts:[]},{date:dstr(4),duration:25,content:'写作练习',rating:4,atts:[]}];
   DB.top5=[{name:'读完 3 本书',progress:66},{name:'健身 12 次',progress:40},{name:'写 20 篇日记',progress:75},{name:'完成语言课程',progress:100},{name:'咖啡品鉴 5 种',progress:20}];
@@ -762,6 +946,20 @@ window.addEventListener('load',()=>{
    INIT
    ============================================================ */
 applyTheme();renderDashboard();renderHabits();renderDiary();
+idbRestoreIfEmpty();   // 若本地被清空,自动从 IndexedDB 冗余备份找回
+/* 备份提醒:有数据、且 7 天内未备份时,轻提示引导云端上传 */
+window.addEventListener('load',()=>{
+  setTimeout(()=>{
+    if(dbIsEmpty(DB))return;
+    const last=localStorage.getItem('last_backup');
+    const stale=!last||((Date.now()-new Date(last).getTime())/864e5>7);
+    if(!stale||localStorage.getItem('backup_hint_dismissed')===today())return;
+    const bar=document.createElement('div');
+    bar.style.cssText='position:absolute;left:12px;right:12px;bottom:150px;z-index:120;background:rgba(31,42,54,.95);color:#fff;border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.5;box-shadow:0 8px 30px rgba(0,0,0,.3);display:flex;gap:10px;align-items:center';
+    bar.innerHTML='<span style="font-size:20px">☁︎</span><span style="flex:1">建议定期备份:点右上「⋯」→「云端上传」发送到微信/飞书,防止数据丢失</span><span style="font-size:18px;opacity:.7;padding:0 4px" onclick="this.parentElement.remove();localStorage.setItem(\'backup_hint_dismissed\',(new Date().toISOString().slice(0,10)))">✕</span>';
+    document.getElementById("phone").appendChild(bar);
+  },2000);
+});
 </script>
 </body>
 </html>
