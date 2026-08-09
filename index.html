@@ -141,7 +141,7 @@ html[data-theme="dark"] .chip{background:#0b1119;}
 .hm-bars{flex:1;display:flex;align-items:flex-end;justify-content:space-between;gap:8px;height:100%;}
 .hm-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:pointer;}
 .hm-bar-stack{flex:1;width:100%;display:flex;flex-direction:column;justify-content:flex-end;}
-.hm-bar-fill{width:100%;max-width:26px;margin:0 auto;position:relative;display:flex;flex-direction:column;justify-content:flex-end;transition:height .3s ease;}
+.hm-bar-fill{width:100%;max-width:26px;margin:0 auto;position:relative;display:flex;flex-direction:column;justify-content:flex-end;transition:height .3s ease;border-radius:6px 6px 0 0;}
 .hm-bar-val{position:absolute;bottom:100%;left:0;right:0;text-align:center;font-size:10px;color:var(--text-2);font-weight:600;margin-bottom:2px;}
 .hm-seg{width:100%;transition:height .3s ease;}
 .hm-seg:first-child{border-radius:6px 6px 0 0;}
@@ -334,16 +334,17 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   /* 用 fixed + inset 精确贴满可视视口:顶部到系统状态栏,底部到屏幕最底(含 home-indicator),彻底消除整体上移与底部留白 */
   .phone{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
   .notch{display:none;}
-  /* reserve the iOS system status-bar zone (clock/battery) so our UI never overlaps it */
-  .statusbar{height:env(safe-area-inset-top,44px);padding:0;align-items:center;}
+  /* reserve the iOS system status-bar zone (clock/wifi/battery) PLUS an extra placeholder band,
+     so the whole page is pushed down and never floats up under / overlaps the system status bar */
+  .statusbar{height:calc(env(safe-area-inset-top,47px) + 22px);padding:0;align-items:center;}
   .statusbar .right{display:none;}
   #clock{opacity:0;}
-  /* our own tool buttons sit just BELOW the system status bar → fully tappable, no battery overlap */
-  .toolbar{top:calc(env(safe-area-inset-top,44px) + 6px);right:16px;}
+  /* our own tool buttons sit clearly BELOW the system status bar → no wifi/battery overlap */
+  .toolbar{top:calc(env(safe-area-inset-top,47px) + 26px);right:16px;}
   /* the menu popover follows the tool buttons down */
-  .pop{top:calc(env(safe-area-inset-top,44px) + 44px);}
-  /* content starts below both the status bar and the tool-button row; ends right above the tab bar */
-  .screen{top:calc(env(safe-area-inset-top,44px) + 44px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
+  .pop{top:calc(env(safe-area-inset-top,47px) + 64px);}
+  /* content starts below both the status bar band and the tool-button row; ends right above the tab bar */
+  .screen{top:calc(env(safe-area-inset-top,47px) + 64px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
   /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
   .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
 }
@@ -621,14 +622,14 @@ function renderHeatmap(){
     const sun=days[6];
     const label=`${monday.getMonth()+1}/${monday.getDate()} - ${sun.getMonth()+1}/${sun.getDate()}`;
     const bars=days.map((d,i)=>{
-      const ds=fmt(d);const parts=dayBreakdown(ds);const tot=mins[i];
+      const ds=fmt(d);const tot=mins[i];
       const fillPct=cap?Math.min(100,Math.round(tot/cap*100)):0;
-      const segs=parts.map(p=>`<div class="hm-seg" style="height:${tot?Math.round(p.min/tot*100):0}%;background:${p.color}"></div>`).join('')||`<div class="hm-seg" style="height:0"></div>`;
+      // 单色:与月/年热力图完全一致 —— 颜色由当天等级 levelOf(ds) 决定,取同一组 --hm 变量
+      const lv=levelOf(ds);const barColor=`var(--hm${lv>0?lv:1})`;
       return `<div class="hm-bar-col" onclick="showDay('${ds}')">
         <div class="hm-bar-stack">
-          <div class="hm-bar-fill" style="height:${fillPct}%">
+          <div class="hm-bar-fill" style="height:${fillPct}%;background:${barColor}">
             <div class="hm-bar-val">${tot?tot:''}</div>
-            ${segs}
           </div>
         </div>
         <div class="hm-bar-x ${ds===tdy?'today':''}">${WDC[i]}</div>
@@ -944,7 +945,6 @@ function openLogEditor(hid,preBookId,idx){
       <div class="field"><label>今日时长(分钟)　·　只改时间也可完成打卡</label>
         <div class="stepper"><button onclick="stepDur(-5)">−</button><input type="number" id="lDur" value="${dur}"><button onclick="stepDur(5)">＋</button></div></div>
       <div class="field"><label>内容 / 备注</label><textarea id="lContent" placeholder="记录今天的内容、收获…">${editLog?(editLog.content||'').replace(/</g,'&lt;'):''}</textarea></div>
-      <div class="field"><label>今日评分</label><div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span class="s ${curStar>=i?'on':''}" data-v="${i}" onclick="setStar(${i})">★</span>`).join('')}</div></div>
       <div class="field"><label>上传附件(图片)</label><div class="att-row" id="attRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>照片<input type="file" accept="image/*" multiple onchange="readAtts(this)"></div></div></div>
       <button class="btn" onclick="saveLog('${hid}')">保存打卡</button>`);
     renderAttRow();
