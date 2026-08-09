@@ -334,17 +334,16 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   /* 用 fixed + inset 精确贴满可视视口:顶部到系统状态栏,底部到屏幕最底(含 home-indicator),彻底消除整体上移与底部留白 */
   .phone{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
   .notch{display:none;}
-  /* reserve the iOS system status-bar zone (clock/wifi/battery) PLUS an extra placeholder band,
-     so the whole page is pushed down and never floats up under / overlaps the system status bar */
-  .statusbar{height:calc(env(safe-area-inset-top,47px) + 22px);padding:0;align-items:center;}
+  /* 顶部安全区(Top)固定 62pt:整屏视图整体下移,系统时钟/WiFi/电量区完全让出,永不重叠 */
+  .statusbar{height:62px;padding:0;align-items:center;}
   .statusbar .right{display:none;}
   #clock{opacity:0;}
-  /* our own tool buttons sit clearly BELOW the system status bar → no wifi/battery overlap */
-  .toolbar{top:calc(env(safe-area-inset-top,47px) + 26px);right:16px;}
+  /* our own tool buttons sit clearly BELOW the 62pt top safe area → no wifi/battery overlap */
+  .toolbar{top:66px;right:16px;}
   /* the menu popover follows the tool buttons down */
-  .pop{top:calc(env(safe-area-inset-top,47px) + 64px);}
-  /* content starts below both the status bar band and the tool-button row; ends right above the tab bar */
-  .screen{top:calc(env(safe-area-inset-top,47px) + 64px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
+  .pop{top:104px;}
+  /* content starts below the 62pt safe area + the tool-button row; ends right above the tab bar */
+  .screen{top:104px;bottom:calc(60px + env(safe-area-inset-bottom,0px));}
   /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
   .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
 }
