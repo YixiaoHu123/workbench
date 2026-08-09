@@ -52,12 +52,12 @@ input,textarea{font-family:inherit;}
 .phone{width:402px;height:874px;max-height:100%;background:var(--bg-base);border-radius:0;position:relative;overflow:hidden;
   box-shadow:0 20px 60px rgba(0,0,0,.28);transition:background .3s;}
 /* status bar */
-.statusbar{height:14px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px;
-  font-size:15px;font-weight:600;color:var(--text-1);position:relative;z-index:5;}
+/* 顶端固定占位格:高 62pt,无边框,像一张图片一样顶住顶部空间;正文在其下方展示 */
+.top-spacer{height:62px;flex:none;background:var(--bg-base);position:relative;z-index:5;transition:background .3s;}
 .statusbar .right{display:flex;gap:6px;align-items:center;}
 #clock{display:none;}   /* 隐藏页面内时钟,避免与手机系统时间重复 */
 /* content scroll area */
-.screen{position:absolute;top:62px;bottom:83px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+.screen{position:absolute;top:110px;bottom:83px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
 .screen::-webkit-scrollbar{width:0;}
 .page{display:none;padding:0 16px 24px;animation:fade .2s ease;}
 .page.active{display:block;}
@@ -307,8 +307,8 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
 .manage-item .form-tag{font-size:11px;color:var(--text-3);}
 .manage-item .del{color:var(--danger);font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;}
 
-/* top toolbar: a full-width bar sitting BELOW the status bar (no button beside the dynamic island) */
-.toolbar{position:absolute;top:14px;left:0;right:0;height:48px;z-index:7;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 16px;background:var(--bg-base);border-bottom:1px solid var(--divider);transition:background .3s;}
+/* top toolbar: a full-width bar sitting BELOW the 62pt top spacer (no button beside the dynamic island) */
+.toolbar{position:absolute;top:62px;left:0;right:0;height:48px;z-index:7;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 16px;background:var(--bg-base);border-bottom:1px solid var(--divider);transition:background .3s;}
 .tool-btn{width:30px;height:30px;border-radius:50%;background:rgba(127,140,158,.15);display:flex;align-items:center;justify-content:center;font-size:15px;}
 
 /* controls panel outside phone */
@@ -319,7 +319,7 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
 .ext-panel button{border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:12px;background:#f7f8fa;}
 .ext-panel button:hover{background:#eef0f3;}
 .ext-panel code{background:#f0f0f0;padding:1px 5px;border-radius:4px;font-size:11px;}
-.pop{position:absolute;top:62px;right:16px;background:var(--bg-card);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.2);
+.pop{position:absolute;top:110px;right:16px;background:var(--bg-card);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.2);
   z-index:60;padding:6px;display:none;min-width:150px;border:1px solid var(--divider);}
 .pop.show{display:block;}
 .pop button{display:block;width:100%;text-align:left;padding:10px 12px;font-size:14px;border-radius:8px;color:var(--text-1);}
@@ -334,17 +334,16 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   .ext-panel{display:none;}
   /* 用 fixed + inset 精确贴满可视视口:顶部到系统状态栏,底部到屏幕最底(含 home-indicator),彻底消除整体上移与底部留白 */
   .phone{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
-  .notch{display:none;}
-  /* 灵动岛专属区:仅预留系统安全区高度,内部及其右侧一律不放任何操作按钮 */
-  .statusbar{height:env(safe-area-inset-top,59px);padding:0;align-items:center;}
+  /* 顶端固定占位格:62pt + 系统安全区,像图片一样顶住顶部,彻底避开灵动岛/电量;正文在其下方 */
+  .top-spacer{height:calc(62px + env(safe-area-inset-top,0px));flex:none;}
   .statusbar .right{display:none;}
   #clock{display:none;}
-  /* 灵动岛下方新增「固定顶部条」:承载浅/深色切换 + 菜单按钮,整条横贯、右对齐,永不与灵动岛/电量重叠 */
-  .toolbar{top:env(safe-area-inset-top,59px);left:0;right:0;height:48px;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 16px;background:var(--bg-base);border-bottom:1px solid var(--divider);z-index:7;}
+  /* 固定顶部条:承载浅/深色切换 + 菜单按钮,紧贴占位格下沿,整条横贯、右对齐 */
+  .toolbar{top:calc(62px + env(safe-area-inset-top,0px));left:0;right:0;height:48px;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 16px;background:var(--bg-base);border-bottom:1px solid var(--divider);z-index:7;}
   /* 菜单弹层挂在固定顶部条之下 */
-  .pop{top:calc(env(safe-area-inset-top,59px) + 48px);}
-  /* 内容区从「灵动岛安全区 + 固定顶部条(48px)」之下开始,底部贴到 tab bar 之上 */
-  .screen{top:calc(env(safe-area-inset-top,59px) + 48px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
+  .pop{top:calc(62px + env(safe-area-inset-top,0px) + 48px);}
+  /* 内容区从「占位格 + 固定顶部条(48px)」之下开始,底部贴到 tab bar 之上 */
+  .screen{top:calc(62px + env(safe-area-inset-top,0px) + 48px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
   /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
   .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
 }
@@ -355,9 +354,7 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
 <div class="stage">
   <!-- ============ PHONE ============ -->
   <div class="phone" id="phone">
-    <div class="statusbar">
-      <span id="clock">9:41</span>
-    </div>
+    <div class="top-spacer" id="topSpacer"><span id="clock">9:41</span></div>
     <div class="toolbar">
       <button class="tool-btn" id="themeBtn" title="切换主题">☾</button>
       <button class="tool-btn" id="menuBtn" title="菜单">⋯</button>
