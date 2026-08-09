@@ -46,10 +46,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 input,textarea{font-family:inherit;}
 
 /* ============================================================
-   Phone frame —— iPhone 15 Pro 393×852
+   Phone frame —— 逻辑分辨率 402×936
    ============================================================ */
 .stage{height:100%;min-height:100%;display:flex;align-items:center;justify-content:center;padding:0;gap:24px;flex-wrap:wrap;overflow:hidden;}
-.phone{width:402px;height:874px;max-height:100%;background:var(--bg-base);border-radius:0;position:relative;overflow:hidden;
+.phone{width:402px;height:936px;max-height:100%;background:var(--bg-base);border-radius:0;position:relative;overflow:hidden;
   box-shadow:0 20px 60px rgba(0,0,0,.28);transition:background .3s;}
 /* status bar */
 /* 顶端固定占位格:高 62pt,无边框,像一张图片一样顶住顶部空间;正文在其下方展示 */
@@ -774,6 +774,8 @@ function renderHabits(){
     const allLogs=DB.logs[h.id]||[];
     const timeByBook={};for(const l of allLogs){if(l.bookId)timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);}
     const startByBook={};for(const l of allLogs){if(l.bookId){if(!startByBook[l.bookId]||l.date<startByBook[l.bookId])startByBook[l.bookId]=l.date;}}
+    // 手动覆盖:书籍可编辑累计时长(totalMin)与开始日期(startDate),优先于自动统计
+    for(const b of books){if(b.totalMin!=null&&b.totalMin!=='')timeByBook[b.id]=Number(b.totalMin)||0;if(b.startDate)startByBook[b.id]=b.startDate;}
     const isFinished=b=>!!b.finished||(b.progress||0)>=100;
     // 当前在读 = 最近点击的一本未读完的书(currentBook),否则第一本未读完
     const reading=books.filter(b=>!isFinished(b));
@@ -847,6 +849,7 @@ function openAllBooks(hid){
   const allLogs=DB.logs[hid]||[];
   const startByBook={};
   for(const l of allLogs){if(l.bookId){if(!startByBook[l.bookId]||l.date<startByBook[l.bookId])startByBook[l.bookId]=l.date;}}
+  for(const b of books){if(b.startDate)startByBook[b.id]=b.startDate;}
   const isFinished=b=>!!b.finished||(b.progress||0)>=100;
   books.sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||''));
   openSheet(`<h3>${histLabel} · ${books.length}</h3>
@@ -1022,14 +1025,21 @@ function openBookEditor(hid,bookId){
   bookStar=b&&b.rating?b.rating:0;
   const timeByBook={},startByBook={};
   for(const l of (DB.logs[hid]||[])){if(l.bookId){timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);if(!startByBook[l.bookId]||l.date<startByBook[l.bookId])startByBook[l.bookId]=l.date;}}
-  const cumH=b?((timeByBook[b.id]||0)/60).toFixed(1):'0.0';
-  const startD=b?(startByBook[b.id]||'—'):'—';
+  // 累计时长(分钟)与开始日期:优先取手动编辑值,否则回退到打卡记录统计
+  const autoMin=b?(timeByBook[b.id]||0):0;
+  const curMin=b?((b.totalMin!=null&&b.totalMin!=='')?Number(b.totalMin)||0:autoMin):0;
+  const autoStart=b?(startByBook[b.id]||''):'';
+  const curStart=b?(b.startDate||autoStart):'';
   const done=b?(!!b.finished||(b.progress||0)>=100):false;
   openSheet(`<h3>${b?`编辑${mn}条目`:`添加${mn}条目`}</h3>
     <div class="field"><label>主标题 · 打卡内容主体</label><input type="text" id="bkT" value="${b?b.title.replace(/"/g,'&quot;'):''}" placeholder="填写这次打卡的内容名称,如 书名 / 咖啡豆名称 / 项目名"></div>
     <div class="field"><label>副标题 · 主标题的信息补充</label><input type="text" id="bkA" value="${b?(b.author||'').replace(/"/g,'&quot;'):''}" placeholder="对主标题的补充说明,如 作者 / 咖啡产地 / 分类"></div>
-    ${b?`<div class="field"><label>累计时长 · 开始日期</label>
-      <div style="font-size:15px;font-weight:600;color:var(--accent);background:var(--bg-base);border-radius:12px;padding:12px">${cumH} 小时　·　开始于 ${startD}</div></div>`:''}
+    ${b?`<div class="field"><label>累计时长(分钟) · 开始日期</label>
+      <div style="display:flex;gap:10px">
+        <input type="number" id="bkMin" min="0" step="1" value="${curMin}" placeholder="累计分钟" style="flex:1">
+        <input type="date" id="bkStart" value="${curStart}" style="flex:1">
+      </div>
+      <div class="st" style="color:var(--text-3);margin-top:6px">≈ ${(curMin/60).toFixed(1)} 小时,留空则按打卡记录自动统计</div></div>`:''}
     <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
       <input type="checkbox" id="bkDone" ${done?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)">标记为「已完成」</label></div>
     <div class="field"><label>整体评分(5 分制)</label><div class="stars" id="bkStars">${[1,2,3,4,5].map(i=>`<span class="s ${b&&b.rating>=i?'on':''}" data-v="${i}" onclick="setBookStar(${i})">★</span>`).join('')}</div></div>
@@ -1049,8 +1059,12 @@ function saveBook(hid,bookId){
   const a=document.getElementById('bkA').value.trim();
   const done=document.getElementById('bkDone')?document.getElementById('bkDone').checked:false;
   const review=document.getElementById('bkReview').value.trim();
+  const minEl=document.getElementById('bkMin'),startEl=document.getElementById('bkStart');
+  const totalMin=minEl?minEl.value.trim():'';const startDate=startEl?startEl.value:'';
   DB.books[hid]=DB.books[hid]||[];
-  if(bookId){const b=DB.books[hid].find(x=>x.id===bookId);if(b){b.title=t;b.author=a;b.finished=done;b.rating=bookStar;b.review=review;if(bookCover)b.cover=bookCover;delete b.progress;}
+  if(bookId){const b=DB.books[hid].find(x=>x.id===bookId);if(b){b.title=t;b.author=a;b.finished=done;b.rating=bookStar;b.review=review;if(bookCover)b.cover=bookCover;delete b.progress;
+      if(totalMin!=='')b.totalMin=Number(totalMin)||0;else delete b.totalMin;
+      if(startDate)b.startDate=startDate;else delete b.startDate;}
     if(!done)DB.currentBook=bookId;                                       // 未读完 → 成为当前在读
     else if(DB.currentBook===bookId)DB.currentBook='';                    // 读完 → 让出当前位
   }
