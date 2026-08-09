@@ -122,8 +122,8 @@ html[data-theme="dark"] .chip{background:#0b1119;}
 .hm-month{display:grid;grid-template-columns:36px repeat(7,1fr);gap:4px;align-items:center;}
 .hm-wd{font-size:10px;color:var(--text-3);text-align:center;padding-bottom:2px;}
 .hm-rl{font-size:10px;color:var(--text-3);text-align:left;white-space:nowrap;}
-/* year dense grid 25 cols × 15 rows = 375 cells, compact so it fits without a long page */
-.hm-year{display:grid;grid-template-columns:repeat(25,1fr);grid-auto-rows:1fr;gap:3px;height:100%;}
+/* year dense grid 23 cols × 16 rows = 368 cells, compact so a full year always fits without overflow */
+.hm-year{display:grid;grid-template-columns:repeat(23,1fr);grid-auto-rows:1fr;gap:3px;height:100%;}
 .hm-year .hm-cell{border-radius:3px;}
 /* fixed-size calendar viewport: week/month/year keep identical width & height (no jump) */
 #heatmap{height:296px;display:flex;flex-direction:column;}
@@ -131,6 +131,8 @@ html[data-theme="dark"] .chip{background:#0b1119;}
 #heatmap .hm-grid,#heatmap .hm-month,#heatmap .hm-year,#heatmap .hm-week{width:100%;}
 #heatmap .hm-month{height:100%;grid-auto-rows:1fr;align-items:stretch;}
 #heatmap .hm-month .hm-cell{aspect-ratio:auto;height:100%;}
+#heatmap .hm-year{height:100%;}
+#heatmap .hm-year .hm-cell{aspect-ratio:auto;width:100%;height:100%;min-width:0;}
 #heatmap .hm-month .hm-wd,#heatmap .hm-month .hm-rl{align-self:center;}
 /* week bar chart */
 .hm-week{display:flex;height:100%;gap:6px;}
@@ -334,16 +336,16 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   /* 用 fixed + inset 精确贴满可视视口:顶部到系统状态栏,底部到屏幕最底(含 home-indicator),彻底消除整体上移与底部留白 */
   .phone{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
   .notch{display:none;}
-  /* 顶部安全区(Top)固定 62pt:整屏视图整体下移,系统时钟/WiFi/电量区完全让出,永不重叠 */
-  .statusbar{height:62px;padding:0;align-items:center;}
+  /* 顶部安全区(Top)= 至少 62pt,且始终比系统状态栏(时钟/WiFi/电量)再低 16pt,整屏视图整体下移,永不重叠 */
+  .statusbar{height:max(62px, calc(env(safe-area-inset-top,47px) + 16px));padding:0;align-items:center;}
   .statusbar .right{display:none;}
-  #clock{opacity:0;}
-  /* our own tool buttons sit clearly BELOW the 62pt top safe area → no wifi/battery overlap */
-  .toolbar{top:66px;right:16px;}
+  #clock{display:none;}
+  /* 主题/菜单两个按钮:落在安全区之下(band + 8pt),完全避开系统电量图标,可正常点击 */
+  .toolbar{top:calc(max(62px, calc(env(safe-area-inset-top,47px) + 16px)) + 8px);right:16px;}
   /* the menu popover follows the tool buttons down */
-  .pop{top:104px;}
-  /* content starts below the 62pt safe area + the tool-button row; ends right above the tab bar */
-  .screen{top:104px;bottom:calc(60px + env(safe-area-inset-bottom,0px));}
+  .pop{top:calc(max(62px, calc(env(safe-area-inset-top,47px) + 16px)) + 46px);}
+  /* 内容区从「安全区 band + 工具按钮行」之下开始,底部贴到 tab bar 之上 */
+  .screen{top:calc(max(62px, calc(env(safe-area-inset-top,47px) + 16px)) + 46px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
   /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
   .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
 }
@@ -667,9 +669,9 @@ function renderHeatmap(){
       <div class="hm-body"><div class="hm-month"><div class="hm-wd"></div>${WD.map(w=>`<div class="hm-wd">${w}</div>`).join('')}${rows}</div></div>`;
     return;
   }
-  // ===== year: compact dense grid 25 cols × 15 rows = 375 cells(可上/下翻年) =====
+  // ===== year: compact dense grid 23 cols × 16 rows = 368 cells(整年 365/366 天全部容纳,可上/下翻年) =====
   const now=new Date();const y=now.getFullYear()+calYearOffset;
-  let days=[];for(let i=0;i<375;i++){const d=new Date(y,0,1);d.setDate(d.getDate()+i);days.push(d);}
+  let days=[];for(let i=0;i<368;i++){const d=new Date(y,0,1);d.setDate(d.getDate()+i);days.push(d);}
   const cells=days.map(d=>{const ds=fmt(d);return `<div class="hm-cell ${ds===tdy?'today':''}" data-lv="${levelOf(ds)}" onclick="showDay('${ds}')"></div>`;}).join('');
   el.innerHTML=`<div class="hm-nav"><span class="arw" onclick="calYearOffset--;renderHeatmap()">‹</span><span>${y}</span><span class="arw" onclick="calYearOffset++;renderHeatmap()">›</span></div>
     <div class="hm-body"><div class="hm-year">${cells}</div></div>`;
