@@ -56,6 +56,7 @@ input,textarea{font-family:inherit;}
   font-size:15px;font-weight:600;color:var(--text-1);position:relative;z-index:5;}
 .notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:34px;background:#000;border-radius:20px;z-index:6;}
 .statusbar .right{display:flex;gap:6px;align-items:center;}
+#clock{display:none;}   /* 隐藏页面内时钟,避免与手机系统时间重复 */
 /* content scroll area */
 .screen{position:absolute;top:59px;bottom:83px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
 .screen::-webkit-scrollbar{width:0;}
@@ -328,9 +329,10 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
 @media (display-mode:standalone),(display-mode:fullscreen){
   html,body{overflow:hidden;height:100dvh;position:fixed;width:100%;top:0;left:0;overscroll-behavior:none;}
   body{background:var(--bg-base);}
-  .stage{display:block;padding:0;min-height:100dvh;}
+  .stage{display:block;padding:0;margin:0;height:100dvh;min-height:100dvh;}
   .ext-panel{display:none;}
-  .phone{width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
+  /* 用 fixed + inset 精确贴满可视视口:顶部到系统状态栏,底部到屏幕最底(含 home-indicator),彻底消除整体上移与底部留白 */
+  .phone{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100dvh;border-radius:0;box-shadow:none;}
   .notch{display:none;}
   /* reserve the iOS system status-bar zone (clock/battery) so our UI never overlaps it */
   .statusbar{height:env(safe-area-inset-top,44px);padding:0;align-items:center;}
@@ -340,7 +342,7 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   .toolbar{top:calc(env(safe-area-inset-top,44px) + 6px);right:16px;}
   /* the menu popover follows the tool buttons down */
   .pop{top:calc(env(safe-area-inset-top,44px) + 44px);}
-  /* content starts below both the status bar and the tool-button row */
+  /* content starts below both the status bar and the tool-button row; ends right above the tab bar */
   .screen{top:calc(env(safe-area-inset-top,44px) + 44px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
   /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
   .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
@@ -955,7 +957,7 @@ function openLogEditor(hid,preBookId,idx){
           <div class="stepper"><button onclick="stepDur(-5)">−</button><input type="number" id="lDur" value="${dur}"><button onclick="stepDur(5)">＋</button></div>
           <input type="range" id="lDurRange" min="0" max="180" step="5" value="${dur}" style="flex:1;accent-color:var(--accent)" oninput="document.getElementById('lDur').value=this.value">
         </div></div>
-      <div class="field"><label>今日内容 · 必填</label><input type="text" id="lTitle" placeholder="如:胸 + 三头 / 有氧跑步 5km" value="${editLog?(editLog.title||'').replace(/"/g,'&quot;'):''}"></div>
+      <div class="field"><label>今日内容 · 必填</label><input type="text" id="lTitle" placeholder="填写今天打卡的具体内容,如 训练部位 / 学习章节 / 练习主题" value="${editLog?(editLog.title||'').replace(/"/g,'&quot;'):''}"></div>
       <div class="field"><label>整体打分(5 星)· 必填</label><div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span class="s ${curStar>=i?'on':''}" data-v="${i}" onclick="setStar(${i})">★</span>`).join('')}</div></div>
       <div class="field"><label>详细备注 · 必填</label><textarea id="lContent" style="min-height:100px" placeholder="今天的状态、细节、感受…">${editLog?(editLog.content||'').replace(/</g,'&lt;'):''}</textarea></div>
       <div class="field"><label>上传图片(可多张,可编辑)</label><div class="att-row" id="attRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>照片<input type="file" accept="image/*" multiple onchange="readAtts(this)"></div></div></div>
@@ -1019,15 +1021,17 @@ function quickCheck(hid,bookId){DB.currentBook=bookId;openLogEditor(hid,bookId);
 /* 书籍编辑:书名·作者·封面·页数进度·5星评分·阅读评价;进度=100 自动归档到历史 */
 function openBookEditor(hid,bookId){
   const books=DB.books[hid]||[];const b=bookId?books.find(x=>x.id===bookId):null;
+  const h=DB.habits.find(x=>x.id===hid);
+  const mn=(h&&h.name)||'条目';
   bookStar=b&&b.rating?b.rating:0;
   const timeByBook={},startByBook={};
   for(const l of (DB.logs[hid]||[])){if(l.bookId){timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);if(!startByBook[l.bookId]||l.date<startByBook[l.bookId])startByBook[l.bookId]=l.date;}}
   const cumH=b?((timeByBook[b.id]||0)/60).toFixed(1):'0.0';
   const startD=b?(startByBook[b.id]||'—'):'—';
   const done=b?(!!b.finished||(b.progress||0)>=100):false;
-  openSheet(`<h3>${b?'编辑书籍':'添加书籍'}</h3>
-    <div class="field"><label>主标题</label><input type="text" id="bkT" value="${b?b.title.replace(/"/g,'&quot;'):''}" placeholder="主标题"></div>
-    <div class="field"><label>副标题</label><input type="text" id="bkA" value="${b?(b.author||'').replace(/"/g,'&quot;'):''}" placeholder="副标题"></div>
+  openSheet(`<h3>${b?`编辑${mn}条目`:`添加${mn}条目`}</h3>
+    <div class="field"><label>主标题 · 打卡内容主体</label><input type="text" id="bkT" value="${b?b.title.replace(/"/g,'&quot;'):''}" placeholder="填写这次打卡的内容名称,如 书名 / 咖啡豆名称 / 项目名"></div>
+    <div class="field"><label>副标题 · 主标题的信息补充</label><input type="text" id="bkA" value="${b?(b.author||'').replace(/"/g,'&quot;'):''}" placeholder="对主标题的补充说明,如 作者 / 咖啡产地 / 分类"></div>
     ${b?`<div class="field"><label>累计时长 · 开始日期</label>
       <div style="font-size:15px;font-weight:600;color:var(--accent);background:var(--bg-base);border-radius:12px;padding:12px">${cumH} 小时　·　开始于 ${startD}</div></div>`:''}
     <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
