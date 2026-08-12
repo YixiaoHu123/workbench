@@ -225,7 +225,7 @@ html[data-theme="dark"] .today-card{border:none;}
   background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 22%,var(--bg-card)),color-mix(in srgb,var(--primary) 26%,var(--bg-card)));}
 .cover-ph svg{width:42%;height:42%;color:#fff;opacity:.9;}
 .book .bt{font-size:13px;margin-top:6px;font-weight:500;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.book .ba{font-size:12px;color:var(--text-2);}
+.book .ba{font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .book .bmeta{font-size:11px;color:var(--text-3);line-height:1.4;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .book .prog-track{margin-top:5px;height:4px;}
 /* light-colored "read" check badge, top-right of cover */
@@ -829,23 +829,25 @@ function renderHabits(){
     // —— 历史信息流(最多 3 行 9 本;超出可「展开」内联全部;保留「查看全部」)——
     const histLabel=h.histLabel||'历史读过的所有书单';
     html+=`<div class="card"><div class="h2"><span>${histLabel} · ${books.length}<span class="link" style="margin-left:6px;font-size:12px" onclick="editFlowLabel('${h.id}','hist')">✎</span></span>${books.length>9?`<span class="link" onclick="openAllBooks('${h.id}')">查看全部 &gt;</span>`:''}</div>`;
+    // 信息流固定只展示最近 9 个;当总数 >9 时通过右上角「查看全部」查看历史全部
     if(books.length){
-      const sorted=books.slice().sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||''));
-      const shown=expandFlow?sorted:sorted.slice(0,9);   // 3 行 × 3 列 = 9
+      // 信息流固定只展示最近 9 个;历史全部走右上角「查看全部」入口
+      const shown=books.slice().sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||'')).slice(0,9);
       html+=`<div class="book-grid">${shown.map(b=>{
-        const rate=b.rating?'★'.repeat(b.rating)+'☆'.repeat(5-b.rating):'';
         const done=isFinished(b);
+        // 已完成且已打分 → 展示最终评分五角星;进行中(未完成或未打分)→ 展示累计时长
+        const scored=done&&b.rating;
+        const metaLine=scored
+          ? `<div class="bmeta" style="color:var(--accent)">${'★'.repeat(b.rating)+'☆'.repeat(5-b.rating)}</div>`
+          : `<div class="bmeta" style="color:var(--accent);font-weight:600">累计 ${((timeByBook[b.id]||0)/60).toFixed(1)} 小时</div>`;
         return `<div class="book" onclick="openBookEditor('${h.id}','${b.id}')">
           <div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div>
           <div class="bt" title="${b.title}">${clampTitle(b.title,7)}</div>
-          <div class="ba">${b.author||'—'}</div>
-          <div class="bmeta" style="color:var(--accent)">${rate}</div>
+          <div class="ba" title="${b.author||''}">${clampTitle(b.author||'—',9)}</div>
+          ${metaLine}
           <div class="bmeta">${startByBook[b.id]||'—'}</div>
         </div>`;
       }).join('')}</div>`;
-      if(books.length>9){
-        html+=`<div style="text-align:center;margin-top:12px"><span class="link" onclick="toggleExpandFlow()">${expandFlow?'收起 ▲':'展开全部 '+books.length+' 本 ▼'}</span></div>`;
-      }
     }else html+=`<div class="empty" style="padding:12px"><p>还没有记录,添加或今日打卡时新建</p></div>`;
     html+=`</div>`;
   }else{
@@ -881,11 +883,12 @@ function openAllBooks(hid){
   const allLogs=DB.logs[hid]||[];
   const startByBook={};
   for(const l of allLogs){if(l.bookId){if(!startByBook[l.bookId]||l.date<startByBook[l.bookId])startByBook[l.bookId]=l.date;}}
-  for(const b of books){if(b.startDate)startByBook[b.id]=b.startDate;}
+  const timeByBook={};for(const l of allLogs){if(l.bookId)timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);}
+  for(const b of books){if(b.startDate)startByBook[b.id]=b.startDate;if(b.totalMin!=null&&b.totalMin!=='')timeByBook[b.id]=Number(b.totalMin)||0;}
   const isFinished=b=>!!b.finished||(b.progress||0)>=100;
   books.sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||''));
   openSheet(`<h3>${histLabel} · ${books.length}</h3>
-    <div class="book-grid">${books.map(b=>{const rate=b.rating?'★'.repeat(b.rating)+'☆'.repeat(5-b.rating):'';const done=isFinished(b);return `<div class="book" onclick="closeSheet(true);openBookEditor('${hid}','${b.id}')"><div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div><div class="bt" title="${b.title}">${clampTitle(b.title,7)}</div><div class="ba">${b.author||'—'}</div><div class="bmeta" style="color:var(--accent)">${rate}</div><div class="bmeta">${startByBook[b.id]||'—'}</div></div>`;}).join('')}</div>
+    <div class="book-grid">${books.map(b=>{const done=isFinished(b);const scored=done&&b.rating;const metaLine=scored?`<div class="bmeta" style="color:var(--accent)">${'★'.repeat(b.rating)+'☆'.repeat(5-b.rating)}</div>`:`<div class="bmeta" style="color:var(--accent);font-weight:600">累计 ${((timeByBook[b.id]||0)/60).toFixed(1)} 小时</div>`;return `<div class="book" onclick="closeSheet(true);openBookEditor('${hid}','${b.id}')"><div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div><div class="bt" title="${b.title}">${clampTitle(b.title,7)}</div><div class="ba" title="${b.author||''}">${clampTitle(b.author||'—',9)}</div>${metaLine}<div class="bmeta">${startByBook[b.id]||'—'}</div></div>`;}).join('')}</div>
     <button class="btn ghost" style="margin-top:16px" onclick="closeSheet(true)">关闭</button>`);
 }
 /* 健身/清单 记录详情卡:弹窗全屏展示(Task #12) */
