@@ -48,9 +48,14 @@ input,textarea{font-family:inherit;}
 /* ============================================================
    Phone frame —— 逻辑分辨率 402×936
    ============================================================ */
-.stage{height:100%;min-height:100%;display:flex;align-items:center;justify-content:center;padding:0;gap:24px;flex-wrap:wrap;overflow:hidden;}
-.phone{width:402px;height:936px;max-height:100%;background:var(--bg-base);border-radius:0;position:relative;overflow:hidden;
+.stage{height:100dvh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:0;gap:24px;flex-wrap:wrap;overflow:hidden;}
+.phone{width:min(402px,100vw);height:min(936px,100dvh);max-height:100dvh;background:var(--bg-base);border-radius:0;position:relative;overflow:hidden;
   box-shadow:0 20px 60px rgba(0,0,0,.28);transition:background .3s;}
+/* 窄屏(真机浏览器/迁移到其它手机)直接铺满整屏,去掉桌面外框留白 */
+@media (max-width:440px),(max-height:960px){
+  .stage{padding:0;gap:0;}
+  .phone{width:100vw;height:100dvh;max-height:100dvh;box-shadow:none;}
+}
 /* status bar */
 /* 顶端固定占位格:高 62pt,无边框,像一张图片一样顶住顶部空间;正文在其下方展示 */
 .top-spacer{height:62px;flex:none;background:var(--bg-base);position:relative;z-index:5;transition:background .3s;}
@@ -190,6 +195,14 @@ html[data-theme="dark"] .chip{background:#0b1119;}
   background:var(--bg-card);border:1px solid var(--divider);font-size:14px;color:var(--text-1);white-space:nowrap;cursor:pointer;transition:all .16s;}
 .mod-chip.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;}
 .mod-chip.add{color:var(--accent);border-style:dashed;}
+/* 模块排序模式:chip 抖动 + 左右移动箭头 */
+.mod-switch.reorder .mod-chip:not(.add):not(.reorder-done){animation:wobble .5s ease-in-out infinite;}
+@keyframes wobble{0%,100%{transform:rotate(-1.4deg)}50%{transform:rotate(1.4deg)}}
+.mod-chip .mv{display:none;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.16);color:#fff;
+  align-items:center;justify-content:center;font-size:13px;line-height:1;}
+.mod-switch.reorder .mod-chip:not(.add) .mv{display:inline-flex;}
+.mod-chip.active .mv{background:rgba(255,255,255,.32);}
+.mod-chip.reorder-done{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;}
 
 /* Today check-in card */
 .today-card{background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;border-radius:var(--r-card);
@@ -751,7 +764,9 @@ function renderDashboard(){renderHeatmap();renderDonut();renderTop5();}
 /* ============================================================
    HABITS
    ============================================================ */
-let activeHabit=null, railExpanded=false;
+let activeHabit=null, railExpanded=false, reorderMode=false, expandFlow=false;
+/* 主标题按中文字符锁定 7 字:超出取前 7 + …,不撑宽卡片/图片 */
+function clampTitle(t,n){t=(t==null?'':String(t));n=n||7;return[...t].length>n?[...t].slice(0,n).join('')+'…':t;}
 /* graphic cover placeholder (replaces bare 📖 emoji fallback) */
 const COVER_PH=`<div class="cover-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16l-5-5-6 6-3-3-4 4"/></svg></div>`;
 function coverHTML(url){return url?`<img src="${url}">`:COVER_PH;}
@@ -765,9 +780,21 @@ function renderHabits(){
   const logs=(DB.logs[h.id]||[]).slice().sort((a,b)=>b.date.localeCompare(a.date));
   const tlog=logs.find(l=>l.date===today());
   // —— 顶部水平模块切换 ——
-  let html='<div class="mod-switch">';
-  html+=DB.habits.map(x=>`<div class="mod-chip ${x.id===activeHabit?'active':''}" onclick="selectHabit('${x.id}')"><span>${x.icon}</span><span>${x.name}</span></div>`).join('');
-  html+=`<div class="mod-chip add" onclick="openHabitEditor()"><span>＋</span><span>新建</span></div></div>`;
+  let html='<div class="mod-switch'+(reorderMode?' reorder':'')+'">';
+  html+=DB.habits.map((x,i)=>{
+    const act=x.id===activeHabit?'active':'';
+    if(reorderMode){
+      const left=i>0?`<span class="mv" onclick="event.stopPropagation();moveHabit('${x.id}',-1)">‹</span>`:'';
+      const right=i<DB.habits.length-1?`<span class="mv" onclick="event.stopPropagation();moveHabit('${x.id}',1)">›</span>`:'';
+      return `<div class="mod-chip ${act}">${left}<span>${x.icon}</span><span>${x.name}</span>${right}</div>`;
+    }
+    return `<div class="mod-chip ${act}" onclick="selectHabit('${x.id}')"><span>${x.icon}</span><span>${x.name}</span></div>`;
+  }).join('');
+  if(reorderMode){
+    html+=`<div class="mod-chip reorder-done" onclick="toggleReorder()"><span>✓</span><span>完成</span></div></div>`;
+  }else{
+    html+=`<div class="mod-chip add" onclick="openHabitEditor()"><span>＋</span><span>新建</span></div><div class="mod-chip" onclick="toggleReorder()"><span>↔</span><span>排序</span></div></div>`;
+  }
   if(h.form==='flow'){
     // ============ READING (match ref_reading.png) ============
     const books=DB.books[h.id]||[];
@@ -799,21 +826,26 @@ function renderHabits(){
         </div></div>`;
     }else html+=`<div class="empty" style="padding:12px"><p>点右上「＋ 添加」登记在读的书,或今日打卡时新建</p></div>`;
     html+=`</div>`;
-    // —— 历史信息流(可编辑标题;全部条目;完成加浅色对勾角标)——
+    // —— 历史信息流(最多 3 行 9 本;超出可「展开」内联全部;保留「查看全部」)——
     const histLabel=h.histLabel||'历史读过的所有书单';
-    html+=`<div class="card"><div class="h2"><span>${histLabel} · ${books.length}<span class="link" style="margin-left:6px;font-size:12px" onclick="editFlowLabel('${h.id}','hist')">✎</span></span>${books.length>3?`<span class="link" onclick="openAllBooks('${h.id}')">查看全部 &gt;</span>`:''}</div>`;
+    html+=`<div class="card"><div class="h2"><span>${histLabel} · ${books.length}<span class="link" style="margin-left:6px;font-size:12px" onclick="editFlowLabel('${h.id}','hist')">✎</span></span>${books.length>9?`<span class="link" onclick="openAllBooks('${h.id}')">查看全部 &gt;</span>`:''}</div>`;
     if(books.length){
-      html+=`<div class="book-grid">${books.slice().sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||'')).slice(0,3).map(b=>{
+      const sorted=books.slice().sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||''));
+      const shown=expandFlow?sorted:sorted.slice(0,9);   // 3 行 × 3 列 = 9
+      html+=`<div class="book-grid">${shown.map(b=>{
         const rate=b.rating?'★'.repeat(b.rating)+'☆'.repeat(5-b.rating):'';
         const done=isFinished(b);
         return `<div class="book" onclick="openBookEditor('${h.id}','${b.id}')">
           <div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div>
-          <div class="bt">${b.title}</div>
+          <div class="bt" title="${b.title}">${clampTitle(b.title,7)}</div>
           <div class="ba">${b.author||'—'}</div>
           <div class="bmeta" style="color:var(--accent)">${rate}</div>
           <div class="bmeta">${startByBook[b.id]||'—'}</div>
         </div>`;
       }).join('')}</div>`;
+      if(books.length>9){
+        html+=`<div style="text-align:center;margin-top:12px"><span class="link" onclick="toggleExpandFlow()">${expandFlow?'收起 ▲':'展开全部 '+books.length+' 本 ▼'}</span></div>`;
+      }
     }else html+=`<div class="empty" style="padding:12px"><p>还没有记录,添加或今日打卡时新建</p></div>`;
     html+=`</div>`;
   }else{
@@ -853,7 +885,7 @@ function openAllBooks(hid){
   const isFinished=b=>!!b.finished||(b.progress||0)>=100;
   books.sort((a,b)=>(startByBook[b.id]||'').localeCompare(startByBook[a.id]||''));
   openSheet(`<h3>${histLabel} · ${books.length}</h3>
-    <div class="book-grid">${books.map(b=>{const rate=b.rating?'★'.repeat(b.rating)+'☆'.repeat(5-b.rating):'';const done=isFinished(b);return `<div class="book" onclick="closeSheet(true);openBookEditor('${hid}','${b.id}')"><div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div><div class="bt">${b.title}</div><div class="ba">${b.author||'—'}</div><div class="bmeta" style="color:var(--accent)">${rate}</div><div class="bmeta">${startByBook[b.id]||'—'}</div></div>`;}).join('')}</div>
+    <div class="book-grid">${books.map(b=>{const rate=b.rating?'★'.repeat(b.rating)+'☆'.repeat(5-b.rating):'';const done=isFinished(b);return `<div class="book" onclick="closeSheet(true);openBookEditor('${hid}','${b.id}')"><div class="cover">${coverHTML(b.cover)}${done?'<span class="done-badge">✓</span>':''}</div><div class="bt" title="${b.title}">${clampTitle(b.title,7)}</div><div class="ba">${b.author||'—'}</div><div class="bmeta" style="color:var(--accent)">${rate}</div><div class="bmeta">${startByBook[b.id]||'—'}</div></div>`;}).join('')}</div>
     <button class="btn ghost" style="margin-top:16px" onclick="closeSheet(true)">关闭</button>`);
 }
 /* 健身/清单 记录详情卡:弹窗全屏展示(Task #12) */
@@ -877,7 +909,10 @@ function openLogCard(hid,idx){
     <button class="btn" style="margin-top:6px" onclick="closeSheet(true);openLogEditor('${hid}',null,${idx})">✎ 编辑这条记录</button>
     <button class="btn danger sm" style="width:100%;margin-top:10px" onclick="DB.logs['${hid}'].splice(${idx},1);save();closeSheet(true);renderHabits();renderDashboard();toast('已删除')">删除这条记录</button>`);
 }
-function selectHabit(id){activeHabit=id;renderHabits();}
+function selectHabit(id){if(reorderMode)return;activeHabit=id;expandFlow=false;renderHabits();}
+function toggleReorder(){reorderMode=!reorderMode;renderHabits();if(!reorderMode){save();toast('模块顺序已保存');}}
+function moveHabit(id,dir){const i=DB.habits.findIndex(h=>h.id===id);if(i<0)return;const j=i+dir;if(j<0||j>=DB.habits.length)return;const t=DB.habits[i];DB.habits[i]=DB.habits[j];DB.habits[j]=t;save();renderHabits();}
+function toggleExpandFlow(){expandFlow=!expandFlow;renderHabits();}
 /* 可编辑标题:图片信息流的「正在阅读」(cur)与「历史…」(hist)标题 */
 function editFlowLabel(hid,which){
   const h=DB.habits.find(x=>x.id===hid);if(!h)return;
@@ -1314,19 +1349,106 @@ window.addEventListener('load',()=>{
 });
 
 /* ============================================================
+   HISTORY SEED —— 历史打卡记录一次性注入(来源:飞书多维表格维护表)
+   合并规则:以「作品名称+模块」为唯一键去重;累计时长取最大值;
+   开始日期取较早;评分/评价/封面已存在则不覆盖(本地优先)。
+   仅执行一次(hist_seed_v1),尊重用户后续的手动增删改。
+   ============================================================ */
+const HIST_SEED={"habits": [{"id": "hb_game", "name": "游戏", "icon": "🎮", "form": "flow", "curLabel": "正在进行", "histLabel": "历史打卡记录"}, {"id": "hb_read", "name": "阅读", "icon": "📖", "form": "flow", "curLabel": "正在进行", "histLabel": "历史打卡记录"}, {"id": "hb_show", "name": "演出", "icon": "🎭", "form": "flow", "curLabel": "正在进行", "histLabel": "历史打卡记录"}], "books": {"hb_game": [{"id": "bk_00", "title": "《红色物质2》", "author": "XR游戏", "cover": "", "finished": true, "rating": 5, "review": "", "totalMin": 440, "startDate": "2025-06-11"}, {"id": "bk_02", "title": "《实景鹅鸭杀》", "author": "剧本杀", "cover": "", "finished": true, "rating": 2, "review": "", "totalMin": 240, "startDate": "2025-06-14"}, {"id": "bk_04", "title": "《谁在看我》", "author": "剧本杀", "cover": "", "finished": true, "rating": 4, "review": "", "totalMin": 90, "startDate": "2025-06-23"}, {"id": "bk_06", "title": "《moss：book》", "author": "XR游戏", "cover": "", "finished": true, "rating": 3, "review": "", "totalMin": 30, "startDate": "2025-07-02"}, {"id": "bk_07", "title": "《moss：book2》", "author": "XR游戏", "cover": "", "finished": true, "rating": 3, "review": "", "totalMin": 285, "startDate": "2025-07-05"}, {"id": "bk_08", "title": "《纸嫁衣8:千子树》", "author": "手机游戏", "cover": "", "finished": true, "rating": 3, "review": "", "totalMin": 50, "startDate": "2025-07-07"}, {"id": "bk_10", "title": "《深渊矿洞》", "author": "剧本杀", "cover": "", "finished": true, "rating": 3, "review": "", "totalMin": 180, "startDate": "2025-07-14"}, {"id": "bk_11", "title": "《变脸》", "author": "剧本杀", "cover": "", "finished": true, "rating": 5, "review": "", "totalMin": 180, "startDate": "2025-07-14"}, {"id": "bk_12", "title": "《实景鹅鸭杀》", "author": "剧本杀", "cover": "", "finished": true, "rating": 2, "review": "", "totalMin": 240, "startDate": "2025-06-14"}, {"id": "bk_13", "title": "《DnD跑团：狂野逐羊》", "author": "剧本杀,手机游戏", "cover": "", "finished": true, "rating": 2, "review": "", "totalMin": 385, "startDate": "2025-07-05"}, {"id": "bk_14", "title": "《头颅们的失眠夜》", "author": "剧本杀", "cover": "", "finished": true, "rating": 4, "review": "", "totalMin": 360, "startDate": "2025-07-15"}, {"id": "bk_21", "title": "《鬼村新娘》", "author": "密室逃脱", "cover": "", "finished": true, "rating": 3, "review": "场景不够真实，演员演绎环节表现也一般，解密环节相对有趣，整体评分一般般", "totalMin": 120, "startDate": "2025-07-29"}, {"id": "bk_24", "title": "《密室逃脱18:移动谜城》", "author": "手机游戏", "cover": "", "finished": true, "rating": 2, "review": "谜题设计的太分散，道具和任务之间需要跑很远的地图，本质上不是一个体验很好的游戏。但是好在他的解谜有一部分是需要动脑子的，但这一部分占比非常小，整体的评分最多两星", "totalMin": 180, "startDate": "2025-08-05"}], "hb_read": [{"id": "bk_01", "title": "《挽救计划》", "author": "小说", "cover": "", "finished": true, "rating": 5, "review": "", "totalMin": 940, "startDate": "2025-06-12"}, {"id": "bk_05", "title": "《提问的艺术：为什么你该这样问》", "author": "技能", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 45, "startDate": "2025-07-02"}, {"id": "bk_09", "title": "《记事本圆梦计划》", "author": "技能", "cover": "", "finished": true, "rating": 4, "review": "笔记管理很实用，有不少可以实践的技巧，不过书是20年前出版的，很多技巧不适用。作者是很符合我对日本企业家的刻板印象，精力旺盛、严苛细致、带着漫出屏幕的信念感", "totalMin": 215, "startDate": "2025-07-09"}, {"id": "bk_15", "title": "《变形记》", "author": "小说", "cover": "", "finished": true, "rating": 2, "review": "在我看来是极其平庸的荒诞小说，除了开篇第一章对职场社畜的夸张刻画，会感受到些许的反讽意味，其余的篇幅都很无厘头，让人摸不着头脑", "totalMin": 205, "startDate": "2025-07-15"}, {"id": "bk_16", "title": "《Reality transurfing I-V》", "author": "灵知", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 195, "startDate": "2025-07-18"}, {"id": "bk_17", "title": "《一日三秋》", "author": "小说", "cover": "", "finished": true, "rating": 4, "review": "", "totalMin": 450, "startDate": "2025-07-18"}, {"id": "bk_18", "title": "《高效能阅读》", "author": "技能", "cover": "", "finished": true, "rating": 3, "review": "", "totalMin": 75, "startDate": "2025-07-24"}, {"id": "bk_19", "title": "《2049:未来10000天的可能》", "author": "社科", "cover": "", "finished": true, "rating": 3, "review": "这本书中提到了非常多的新兴行业和趋势预测，大部分行业和未来趋势与我对这个行业原本能理解比较接近，所以对我来说获取到的额外信息量相对较少，但是这依然是一个预测未来世界科技发展趋势可读性比较强的趣味读物。", "totalMin": 470, "startDate": "2025-07-26"}, {"id": "bk_20", "title": "《我，刀枪不入》", "author": "灵知", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 10, "startDate": "2025-07-28"}, {"id": "bk_22", "title": "《宇宙无事发生》", "author": "小说", "cover": "", "finished": true, "rating": 2, "review": "除了前几篇内容新颖，叙述诡计设计巧妙外，大篇幅的文章真就又臭又长，阅读到75%，实在读不动了，放弃剩下的篇幅，不然好不容易培养的阅读习惯都在被影响", "totalMin": 125, "startDate": "2025-08-02"}, {"id": "bk_23", "title": "《麦肯锡结构化战略思维》", "author": "技能", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 425, "startDate": "2025-08-04"}, {"id": "bk_25", "title": "《增强现实：技术、应用和人体因素》", "author": "技能,社科", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 165, "startDate": "2025-08-08"}, {"id": "bk_26", "title": "《一切愁云消散》", "author": "小说", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 95, "startDate": "2025-08-31"}, {"id": "bk_27", "title": "《挑战式销售》", "author": "技能", "cover": "", "finished": true, "rating": 1, "review": "通篇是正确的废话，作为出版物来看，逻辑不清晰，结论不严谨，不值得浪费时间", "totalMin": 220, "startDate": "2025-09-10"}, {"id": "bk_28", "title": "《销售管理》", "author": "技能", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 45, "startDate": "2025-09-15"}, {"id": "bk_29", "title": "《人与绩效》", "author": "技能", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 30, "startDate": "2025-09-23"}, {"id": "bk_30", "title": "《间接思考的艺术》", "author": "社科", "cover": "", "finished": true, "rating": 1, "review": "这本书基本都是作者的论断，每一个章节里面虽然引用非常多的信息来源，但经不起推敲，而且每一个论点提供的佐证非常的零散，构不成一个完整框架，读起来是浪费时间", "totalMin": 55, "startDate": "2025-12-29"}, {"id": "bk_31", "title": "《成大事者慢半拍》", "author": "社科", "cover": "", "finished": true, "rating": 0, "review": "", "totalMin": 120, "startDate": "2026-01-03"}, {"id": "bk_32", "title": "《轻故事：人类会被ai淘汰吗》", "author": "社科", "cover": "", "finished": true, "rating": 4, "review": "可读性很强，对话的专家", "totalMin": 30, "startDate": "2026-01-08"}, {"id": "bk_33", "title": "《轻故事：复盘飞书七年》", "author": "社科", "cover": "", "finished": true, "rating": 4, "review": "", "totalMin": 30, "startDate": "2026-01-08"}], "hb_show": [{"id": "bk_03", "title": "《巴黎圣母院》", "author": "歌剧", "cover": "", "finished": true, "rating": 5, "review": "", "totalMin": 250, "startDate": "2025-06-21"}]}, "logs": {"hb_game": [{"date": "2025-06-11", "duration": 440, "content": "《红色物质2》", "rating": 5, "atts": [], "bookId": "bk_00", "title": "《红色物质2》"}, {"date": "2025-06-14", "duration": 240, "content": "《实景鹅鸭杀》", "rating": 2, "atts": [], "bookId": "bk_02", "title": "《实景鹅鸭杀》"}, {"date": "2025-06-23", "duration": 90, "content": "《谁在看我》", "rating": 4, "atts": [], "bookId": "bk_04", "title": "《谁在看我》"}, {"date": "2025-07-02", "duration": 30, "content": "《moss：book》", "rating": 3, "atts": [], "bookId": "bk_06", "title": "《moss：book》"}, {"date": "2025-07-05", "duration": 285, "content": "《moss：book2》", "rating": 3, "atts": [], "bookId": "bk_07", "title": "《moss：book2》"}, {"date": "2025-07-07", "duration": 50, "content": "《纸嫁衣8:千子树》", "rating": 3, "atts": [], "bookId": "bk_08", "title": "《纸嫁衣8:千子树》"}, {"date": "2025-07-14", "duration": 180, "content": "《深渊矿洞》", "rating": 3, "atts": [], "bookId": "bk_10", "title": "《深渊矿洞》"}, {"date": "2025-07-14", "duration": 180, "content": "《变脸》", "rating": 5, "atts": [], "bookId": "bk_11", "title": "《变脸》"}, {"date": "2025-06-14", "duration": 240, "content": "《实景鹅鸭杀》", "rating": 2, "atts": [], "bookId": "bk_12", "title": "《实景鹅鸭杀》"}, {"date": "2025-07-05", "duration": 385, "content": "《DnD跑团：狂野逐羊》", "rating": 2, "atts": [], "bookId": "bk_13", "title": "《DnD跑团：狂野逐羊》"}, {"date": "2025-07-15", "duration": 360, "content": "《头颅们的失眠夜》", "rating": 4, "atts": [], "bookId": "bk_14", "title": "《头颅们的失眠夜》"}, {"date": "2025-07-29", "duration": 120, "content": "场景不够真实，演员演绎环节表现也一般，解密环节相对有趣，整体评分一般般", "rating": 3, "atts": [], "bookId": "bk_21", "title": "《鬼村新娘》"}, {"date": "2025-08-05", "duration": 180, "content": "谜题设计的太分散，道具和任务之间需要跑很远的地图，本质上不是一个体验很好的游戏。但是好在他的解谜有一部分是需要动脑子的，但这一部分占比非常小，整体的评分最多两星", "rating": 2, "atts": [], "bookId": "bk_24", "title": "《密室逃脱18:移动谜城》"}], "hb_read": [{"date": "2025-06-12", "duration": 940, "content": "《挽救计划》", "rating": 5, "atts": [], "bookId": "bk_01", "title": "《挽救计划》"}, {"date": "2025-07-02", "duration": 45, "content": "《提问的艺术：为什么你该这样问》", "rating": 0, "atts": [], "bookId": "bk_05", "title": "《提问的艺术：为什么你该这样问》"}, {"date": "2025-07-09", "duration": 215, "content": "笔记管理很实用，有不少可以实践的技巧，不过书是20年前出版的，很多技巧不适用。作者是很符合我对日本企业家的刻板印象，精力旺盛、严苛细致、带着漫出屏幕的信念感", "rating": 4, "atts": [], "bookId": "bk_09", "title": "《记事本圆梦计划》"}, {"date": "2025-07-15", "duration": 205, "content": "在我看来是极其平庸的荒诞小说，除了开篇第一章对职场社畜的夸张刻画，会感受到些许的反讽意味，其余的篇幅都很无厘头，让人摸不着头脑", "rating": 2, "atts": [], "bookId": "bk_15", "title": "《变形记》"}, {"date": "2025-07-18", "duration": 195, "content": "《Reality transurfing I-V》", "rating": 0, "atts": [], "bookId": "bk_16", "title": "《Reality transurfing I-V》"}, {"date": "2025-07-18", "duration": 450, "content": "《一日三秋》", "rating": 4, "atts": [], "bookId": "bk_17", "title": "《一日三秋》"}, {"date": "2025-07-24", "duration": 75, "content": "《高效能阅读》", "rating": 3, "atts": [], "bookId": "bk_18", "title": "《高效能阅读》"}, {"date": "2025-07-26", "duration": 470, "content": "这本书中提到了非常多的新兴行业和趋势预测，大部分行业和未来趋势与我对这个行业原本能理解比较接近，所以对我来说获取到的额外信息量相对较少，但是这依然是一个预测未来世界科技发展趋势可读性比较强的趣味读物。", "rating": 3, "atts": [], "bookId": "bk_19", "title": "《2049:未来10000天的可能》"}, {"date": "2025-07-28", "duration": 10, "content": "《我，刀枪不入》", "rating": 0, "atts": [], "bookId": "bk_20", "title": "《我，刀枪不入》"}, {"date": "2025-08-02", "duration": 125, "content": "除了前几篇内容新颖，叙述诡计设计巧妙外，大篇幅的文章真就又臭又长，阅读到75%，实在读不动了，放弃剩下的篇幅，不然好不容易培养的阅读习惯都在被影响", "rating": 2, "atts": [], "bookId": "bk_22", "title": "《宇宙无事发生》"}, {"date": "2025-08-04", "duration": 425, "content": "《麦肯锡结构化战略思维》", "rating": 0, "atts": [], "bookId": "bk_23", "title": "《麦肯锡结构化战略思维》"}, {"date": "2025-08-08", "duration": 165, "content": "《增强现实：技术、应用和人体因素》", "rating": 0, "atts": [], "bookId": "bk_25", "title": "《增强现实：技术、应用和人体因素》"}, {"date": "2025-08-31", "duration": 95, "content": "《一切愁云消散》", "rating": 0, "atts": [], "bookId": "bk_26", "title": "《一切愁云消散》"}, {"date": "2025-09-10", "duration": 220, "content": "通篇是正确的废话，作为出版物来看，逻辑不清晰，结论不严谨，不值得浪费时间", "rating": 1, "atts": [], "bookId": "bk_27", "title": "《挑战式销售》"}, {"date": "2025-09-15", "duration": 45, "content": "《销售管理》", "rating": 0, "atts": [], "bookId": "bk_28", "title": "《销售管理》"}, {"date": "2025-09-23", "duration": 30, "content": "《人与绩效》", "rating": 0, "atts": [], "bookId": "bk_29", "title": "《人与绩效》"}, {"date": "2025-12-29", "duration": 55, "content": "这本书基本都是作者的论断，每一个章节里面虽然引用非常多的信息来源，但经不起推敲，而且每一个论点提供的佐证非常的零散，构不成一个完整框架，读起来是浪费时间", "rating": 1, "atts": [], "bookId": "bk_30", "title": "《间接思考的艺术》"}, {"date": "2026-01-03", "duration": 120, "content": "《成大事者慢半拍》", "rating": 0, "atts": [], "bookId": "bk_31", "title": "《成大事者慢半拍》"}, {"date": "2026-01-08", "duration": 30, "content": "可读性很强，对话的专家", "rating": 4, "atts": [], "bookId": "bk_32", "title": "《轻故事：人类会被ai淘汰吗》"}, {"date": "2026-01-08", "duration": 30, "content": "《轻故事：复盘飞书七年》", "rating": 4, "atts": [], "bookId": "bk_33", "title": "《轻故事：复盘飞书七年》"}], "hb_show": [{"date": "2025-06-21", "duration": 250, "content": "《巴黎圣母院》", "rating": 5, "atts": [], "bookId": "bk_03", "title": "《巴黎圣母院》"}]}};
+function seedHistory(){
+  const S=HIST_SEED;
+  // 1) 习惯模块:按 name 去重合入
+  DB.habits=DB.habits||[];
+  const habByName={};DB.habits.forEach(h=>habByName[h.name]=h);
+  const idRemap={};   // seed habitId -> 实际 habitId
+  for(const sh of S.habits){
+    let h=habByName[sh.name];
+    if(!h){h=JSON.parse(JSON.stringify(sh));DB.habits.push(h);habByName[h.name]=h;}
+    idRemap[sh.id]=h.id;
+  }
+  // 2) 书籍:按「模块(实际hid)+标题」唯一键合并,时长取大、开始日期取早
+  DB.books=DB.books||{};DB.logs=DB.logs||{};
+  const bookIdRemap={};  // seed bookId -> 实际 bookId
+  for(const shid in S.books){
+    const hid=idRemap[shid];DB.books[hid]=DB.books[hid]||[];
+    const byTitle={};DB.books[hid].forEach(b=>byTitle[b.title]=b);
+    for(const sb of S.books[shid]){
+      let b=byTitle[sb.title];
+      if(!b){
+        const nb={id:uid(),title:sb.title,author:sb.author||'',cover:sb.cover||'',
+          finished:!!sb.finished,rating:sb.rating||0,review:sb.review||'',
+          totalMin:sb.totalMin||0,startDate:sb.startDate||''};
+        DB.books[hid].push(nb);byTitle[nb.title]=nb;bookIdRemap[sb.id]=nb.id;
+      }else{
+        // 冲突:累计时长取最大值
+        const cur=(b.totalMin!=null&&b.totalMin!=='')?Number(b.totalMin)||0:0;
+        b.totalMin=Math.max(cur,Number(sb.totalMin)||0);
+        // 开始日期取较早
+        if(sb.startDate&&(!b.startDate||sb.startDate<b.startDate))b.startDate=sb.startDate;
+        // 评分/评价/封面:本地已有则不覆盖
+        if(!b.rating&&sb.rating)b.rating=sb.rating;
+        if(!b.review&&sb.review)b.review=sb.review;
+        if(!b.cover&&sb.cover)b.cover=sb.cover;
+        if(sb.finished)b.finished=true;
+        bookIdRemap[sb.id]=b.id;
+      }
+    }
+  }
+  // 3) 打卡日志:按「日期+bookId」去重后合入
+  for(const shid in S.logs){
+    const hid=idRemap[shid];DB.logs[hid]=DB.logs[hid]||[];
+    const seen={};DB.logs[hid].forEach(l=>seen[(l.date||'')+'|'+(l.bookId||'')]=true);
+    for(const sl of S.logs[shid]){
+      const bid=bookIdRemap[sl.bookId]||sl.bookId;
+      const k=(sl.date||'')+'|'+bid;
+      if(seen[k])continue;
+      DB.logs[hid].push(Object.assign({},sl,{bookId:bid}));seen[k]=true;
+    }
+  }
+  save();applyTheme();renderDashboard();renderHabits();renderDiary();
+}
+
+/* ============================================================
+   DATA CLEAN —— 清洗最初设计代码的原始示例数据(一次性 demo_purge_v1)
+   仅保留真实历史打卡记录;删除示例书/示例日志/示例日记/示例目标。
+   ============================================================ */
+const DEMO_BOOK_TITLES=['月亮与六便士','思考,快与慢','原则'];
+const DEMO_HABIT_NAMES=['健身','语言表达'];
+const DEMO_DIARY_TITLES=['关于专注的思考','健身带来的改变','读书笔记:原则'];
+function purgeDemo(){
+  DB.habits=DB.habits||[];DB.books=DB.books||{};DB.logs=DB.logs||{};
+  const removeIds=DB.habits.filter(h=>DEMO_HABIT_NAMES.includes(h.name)).map(h=>h.id);
+  DB.habits=DB.habits.filter(h=>!DEMO_HABIT_NAMES.includes(h.name));
+  removeIds.forEach(id=>{delete DB.logs[id];delete DB.books[id];});
+  for(const hid in DB.books){
+    const demoBookIds=(DB.books[hid]||[]).filter(b=>DEMO_BOOK_TITLES.includes(b.title)).map(b=>b.id);
+    if(demoBookIds.length){
+      DB.books[hid]=DB.books[hid].filter(b=>!DEMO_BOOK_TITLES.includes(b.title));
+      DB.logs[hid]=(DB.logs[hid]||[]).filter(l=>!demoBookIds.includes(l.bookId));
+    }
+    if(DB.currentBook&&demoBookIds.includes(DB.currentBook))DB.currentBook='';
+  }
+  DB.diaries=(DB.diaries||[]).filter(d=>!DEMO_DIARY_TITLES.includes(d.title));
+  DB.top5=[];
+  save();applyTheme();renderDashboard();renderHabits();renderDiary();
+}
+
+/* ============================================================
    INIT
    ============================================================ */
 applyTheme();renderDashboard();renderHabits();renderDiary();
 idbRestoreIfEmpty();   // 若本地被清空,自动从 IndexedDB 冗余备份找回
-/* 首次启动(从未初始化过、且本地/备份都为空)→ 载入初始示例内容,
-   让每个模块(阅读/任务/日记/看板)都有可直接编辑、可删除的展示效果。
-   只执行一次:之后即使用户清空数据也不再自动重灌,尊重用户操作。 */
-setTimeout(()=>{
-  if(!localStorage.getItem('seeded_v1') && dbIsEmpty(DB)){
-    loadDemo();
-    localStorage.setItem('seeded_v1','1');
-  }
-},600);
+/* 历史打卡记录一次性注入:仅首次、以合并方式写入(不覆盖本地已有数据) */
+if(!localStorage.getItem('hist_seed_v1')){
+  try{seedHistory();}catch(e){}
+  localStorage.setItem('hist_seed_v1','1');
+}
+/* 数据清洗:一次性清除最初设计代码的示例数据,只保留真实历史记录 */
+if(!localStorage.getItem('demo_purge_v1')){
+  try{purgeDemo();}catch(e){}
+  localStorage.setItem('demo_purge_v1','1');
+}
+/* 示例数据不再自动灌入(以真实历史记录为准);如需初始演示可手动 loadDemo() */
 /* 备份提醒:有数据、且 7 天内未备份时,轻提示引导云端上传 */
 window.addEventListener('load',()=>{
   setTimeout(()=>{
