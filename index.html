@@ -62,14 +62,15 @@ input,textarea{font-family:inherit;}
 .statusbar .right{display:flex;gap:6px;align-items:center;}
 #clock{display:none;}   /* 隐藏页面内时钟,避免与手机系统时间重复 */
 /* content scroll area */
-.screen{position:absolute;top:110px;bottom:83px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+.screen{position:absolute;top:110px;bottom:calc(63px + env(safe-area-inset-bottom,0px));left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
 .screen::-webkit-scrollbar{width:0;}
 .page{display:none;padding:0 16px 24px;animation:fade .2s ease;}
 .page.active{display:block;}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-/* tab bar */
-.tabbar{position:absolute;bottom:0;left:0;right:0;height:83px;background:var(--bg-card);
-  border-top:1px solid var(--divider);display:flex;padding-bottom:20px;z-index:10;transition:background .3s;}
+/* tab bar —— 高度含安全区,底部内边距用 env(safe-area-inset-bottom) 自适应,
+   无安全区(桌面/预览)时贴底,消除底部悬空空白 */
+.tabbar{position:absolute;bottom:0;left:0;right:0;height:calc(63px + env(safe-area-inset-bottom,0px));background:var(--bg-card);
+  border-top:1px solid var(--divider);display:flex;padding-bottom:env(safe-area-inset-bottom,0px);z-index:10;transition:background .3s;}
 .tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
   font-size:10px;color:var(--text-3);}
 .tabbar button.active{color:var(--accent);}
@@ -214,12 +215,14 @@ html[data-theme="dark"] .today-card{border:none;}
   width:100%;display:flex;align-items:center;justify-content:center;gap:6px;backdrop-filter:blur(4px);}
 .today-card .checkbtn:active{background:rgba(255,255,255,.32);}
 
-/* Book grid */
-.book-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
-.book{cursor:pointer;}
-.book .cover{aspect-ratio:3/4;border-radius:8px;background:var(--bg-base);border:1px solid var(--divider);
-  display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text-3);overflow:hidden;position:relative;}
-.book .cover img{width:100%;height:100%;object-fit:cover;}
+/* Book grid —— 三列等宽,每格图片强制同尺寸(3:4),避免首图比其余大一圈 */
+.book-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:start;}
+.book{cursor:pointer;min-width:0;}
+/* padding 撑高法锁定 3:4 比例,兼容 Safari;绝对定位内容填满,保证三列图片完全一致 */
+.book .cover{width:100%;height:0;padding-top:133.33%;border-radius:8px;background:var(--bg-base);border:1px solid var(--divider);
+  overflow:hidden;position:relative;}
+.book .cover>.cover-ph,.book .cover>img{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text-3);}
+.book .cover img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;}
 /* graphic placeholder when no photo uploaded (replaces bare emoji) */
 .cover-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 22%,var(--bg-card)),color-mix(in srgb,var(--primary) 26%,var(--bg-card)));}
