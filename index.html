@@ -810,10 +810,11 @@ function renderHabits(){
     // 当前在读 = 最近点击的一本未读完的书(currentBook),否则第一本未读完
     const reading=books.filter(b=>!isFinished(b));
     let cur=reading.find(b=>b.id===DB.currentBook)||reading[0]||null;
-    // —— 今日目标卡 ——
+    // —— 今日目标卡(当日总时长 = 今天所有条目打卡之和)——
+    const todayTotal=allLogs.filter(l=>l.date===today()).reduce((s,l)=>s+(Number(l.duration)||0),0);
     html+=`<div class="today-card">
       <div class="lbl">${h.icon} ${h.name} · 今日目标</div>
-      <div class="big">${tlog?(tlog.duration||0)+' 分钟':'0 分钟'}</div>
+      <div class="big">${todayTotal} 分钟</div>
       <button class="checkbtn" onclick="openLogEditor('${h.id}'${cur?",'"+cur.id+"'":''})">＋ 今日打卡</button></div>`;
     // —— 正在阅读(可编辑标题;整卡点击=打卡&编辑,无额外按钮)——
     const curLabel=h.curLabel||'正在阅读';
@@ -986,10 +987,13 @@ function openLogEditor(hid,preBookId,idx){
   }else if(isFlow){
     const timeByBook={};for(const l of (DB.logs[hid]||[])){if(l.bookId)timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);}
     const curCum=bookId?((timeByBook[bookId]||0)/60).toFixed(1):'0.0';
+    const isDone=b=>!!b.finished||(b.progress||0)>=100;
+    // 今日打卡下拉只展示「未完成」条目;若正在编辑一条已完成条目的历史记录,则保留该项以免丢选
+    const selectable=books.filter(b=>!isDone(b)||b.id===bookId);
     openSheet(`<h3>${h.icon} ${h.name} · 今日打卡</h3>
       <div class="field"><label>选择条目</label>
         <select id="lBookSel" onchange="onLogBookChange('${hid}')">
-          ${books.map(b=>`<option value="${b.id}" ${b.id===bookId?'selected':''}>${b.title}${(b.finished||(b.progress||0)>=100)?' ✓已完成':''}</option>`).join('')}
+          ${selectable.map(b=>`<option value="${b.id}" ${b.id===bookId?'selected':''}>${b.title}${isDone(b)?' ✓已完成':''}</option>`).join('')}
           <option value="__new">＋ 新增一项…</option>
         </select></div>
         <div id="newBookBox" style="display:${books.length?'none':'block'}">
@@ -1083,6 +1087,12 @@ function saveLog(hid){
   }
   DB.logs[hid]=DB.logs[hid]||[];
   if(editLog!==null&&editLogIdx!==null){DB.logs[hid][editLogIdx]=log;}
+  else if(isFlow){
+    // 图片信息流:按「日期 + 条目」去重,同一天可对多本书分别打卡,各自累计互不覆盖;
+    // 当日总时长 = 当天所有条目记录之和(例如两本各10分钟 → 当日20分钟)
+    const ex=DB.logs[hid].findIndex(l=>l.date===dateStr&&(l.bookId||'')===(log.bookId||''));
+    if(ex>=0)DB.logs[hid][ex]=log;else DB.logs[hid].push(log);
+  }
   else{const ex=DB.logs[hid].findIndex(l=>l.date===dateStr);if(ex>=0)DB.logs[hid][ex]=log;else DB.logs[hid].push(log);}
   editLogIdx=null;curStar=0;save();closeSheet(true);renderHabits();renderDashboard();toast('✓ 今日已点亮日历');
 }
