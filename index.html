@@ -358,10 +358,10 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
   .toolbar{top:calc(62px + env(safe-area-inset-top,0px));left:0;right:0;height:48px;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 16px;background:var(--bg-base);border-bottom:1px solid var(--divider);z-index:7;}
   /* 菜单弹层挂在固定顶部条之下 */
   .pop{top:calc(62px + env(safe-area-inset-top,0px) + 48px);}
-  /* 内容区从「占位格 + 固定顶部条(48px)」之下开始,底部贴到 tab bar 之上 */
-  .screen{top:calc(62px + env(safe-area-inset-top,0px) + 48px);bottom:calc(60px + env(safe-area-inset-bottom,0px));}
-  /* tab bar hugs the very bottom; only the home-indicator inset is added as padding */
-  .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);}
+  /* 内容区从「占位格 + 固定顶部条(48px)」之下开始,底部贴到 tab bar 之上;整体强制下移 100pt(用户要求:主屏幕加桌面后底部悬空,强制下拉100pt对齐真实底部) */
+  .screen{top:calc(62px + env(safe-area-inset-top,0px) + 48px);bottom:calc(60px + env(safe-area-inset-bottom,0px) - 100px);}
+  /* tab bar 强制下移 100pt(网页端可能超出视口不可见,但加到主屏幕后底部对齐正常) */
+  .tabbar{height:calc(60px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);transform:translateY(100px);}
 }
 
 </style>
@@ -476,7 +476,7 @@ html[data-theme="dark"] .stepper{background:#0b1119;}
    ============================================================ */
 const KEY='workbench_v1';
 const DEFAULT={
-  habits:[],           // {id,name,icon,form:'flow'|'list'}
+  habits:[],           // {id,name,icon,form:'flow'|'list'|'count'}
   logs:{},             // habitId: [{date,duration,content,rating,atts:[dataURL],bookId}]
   books:{},            // habitId: [{id,title,author,cover,progress}]  ← 阅读类书籍库,与打卡联动
   top5:[],             // {name,progress}
@@ -820,12 +820,13 @@ function renderHabits(){
     html+=`<div class="card"><div class="h2"><span>${curLabel}<span class="link" style="margin-left:6px;font-size:12px" onclick="editFlowLabel('${h.id}','cur')">✎</span></span><span class="link" onclick="openBookEditor('${h.id}','')">＋ 添加</span></div>`;
     if(cur){
       const cumH=((timeByBook[cur.id]||0)/60).toFixed(1);
+      const cumLbl=/阅读|读书|看书/.test(h.name||'')?'累计阅读':'累计时长';
       html+=`<div class="tlist-item" style="align-items:center;cursor:pointer" onclick="quickCheck('${h.id}','${cur.id}')">
         <div class="thumb" style="width:60px;height:80px">${coverHTML(cur.cover)}</div>
         <div class="info"><div class="mt">${cur.title}</div>
           <div class="st">${cur.author||'—'}</div>
           <div class="st">开始于 ${startByBook[cur.id]||'—'}</div>
-          <div class="st" style="color:var(--accent);font-weight:600;margin-top:4px">累计阅读 ${cumH} 小时</div>
+          <div class="st" style="color:var(--accent);font-weight:600;margin-top:4px">${cumLbl} ${cumH} 小时</div>
         </div></div>`;
     }else html+=`<div class="empty" style="padding:12px"><p>点右上「＋ 添加」登记在读的书,或今日打卡时新建</p></div>`;
     html+=`</div>`;
@@ -942,7 +943,8 @@ function openHabitEditor(editId){
     <div class="field"><label>下方呈现形态</label>
       <select id="hForm" ${h?'disabled title="形态创建后不可更改"':''}>
         <option value="flow" ${h&&h.form==='flow'?'selected':''}>图片信息流(适合阅读/收藏)</option>
-        <option value="list" ${h&&h.form==='list'?'selected':''}>任务清单(适合健身/打卡)</option></select></div>
+        <option value="list" ${h&&h.form==='list'?'selected':''}>任务清单(适合健身/打卡)</option>
+        <option value="count" ${h&&h.form==='count'?'selected':''}>任务打卡次数(适合思维/脑力训练)</option></select></div>
     <button class="btn" onclick="saveHabit('${editId||''}')">${h?'保存修改':'创建'}</button>`);
 }
 function pickEmoji(e){document.getElementById('hIcon').value=e;document.querySelectorAll('#emojiPick span').forEach(s=>s.style.background=s.textContent===e?'var(--accent)':'var(--bg-base)');}
@@ -957,6 +959,7 @@ let logAtts=[],logCover='',editLogIdx=null;
 function openLogEditor(hid,preBookId,idx){
   const h=DB.habits.find(x=>x.id===hid);logAtts=[];logCover='';
   const isFlow=h.form==='flow';
+  const isCount=h.form==='count';
   editLogIdx=(typeof idx==='number')?idx:null;
   const editLog=editLogIdx!==null?(DB.logs[hid]||[])[editLogIdx]:null;
   if(editLog&&editLog.atts)logAtts=editLog.atts.slice();
@@ -966,7 +969,21 @@ function openLogEditor(hid,preBookId,idx){
   curStar=editLog&&editLog.rating?editLog.rating:0;
   const dur=editLog?editLog.duration||0:(isFlow?30:45);
   const dateStr=editLog?editLog.date:today();
-  if(isFlow){
+  if(isCount){
+    // ============ 次数打卡:只录今日次数,自动按 次数×10 分钟计入累计时长 ============
+    const cnt=editLog?(editLog.count!=null?editLog.count:Math.round((editLog.duration||0)/10)):1;
+    openSheet(`<h3>${h.icon} ${h.name} · 次数打卡</h3>
+      <div class="field"><label>日期(按打卡自动生成)</label><input type="text" value="${dateStr}" disabled style="opacity:.7"></div>
+      <div class="field"><label>今日次数 · 必填 · 每次自动计 10 分钟</label>
+        <div class="stepper"><button onclick="stepCnt(-1)">−</button><input type="number" id="lCount" min="0" step="1" value="${cnt}" oninput="document.getElementById('lCntMin').textContent=(+this.value||0)*10"><button onclick="stepCnt(1)">＋</button></div>
+        <div class="st" style="color:var(--text-3);margin-top:6px">≈ 今日累计投入 <span id="lCntMin">${cnt*10}</span> 分钟</div></div>
+      <div class="field"><label>今日内容 · 选填</label><input type="text" id="lTitle" placeholder="如 训练主题 / 题型" value="${editLog?(editLog.title||'').replace(/"/g,'&quot;'):''}"></div>
+      <div class="field"><label>整体打分(5 星)· 选填</label><div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span class="s ${curStar>=i?'on':''}" data-v="${i}" onclick="setStar(${i})">★</span>`).join('')}</div></div>
+      <div class="field"><label>详细备注 · 选填</label><textarea id="lContent" style="min-height:90px" placeholder="今天的状态、细节、感受…（选填）">${editLog?(editLog.content||'').replace(/</g,'&lt;'):''}</textarea></div>
+      <div class="field"><label>上传附件(图片,选填)</label><div class="att-row" id="attRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>照片<input type="file" accept="image/*" multiple onchange="readAtts(this)"></div></div></div>
+      <button class="btn" onclick="saveLog('${hid}')">${editLog?'保存修改':'保存打卡'}</button>`);
+    renderAttRow();
+  }else if(isFlow){
     const timeByBook={};for(const l of (DB.logs[hid]||[])){if(l.bookId)timeByBook[l.bookId]=(timeByBook[l.bookId]||0)+(Number(l.duration)||0);}
     const curCum=bookId?((timeByBook[bookId]||0)/60).toFixed(1):'0.0';
     openSheet(`<h3>${h.icon} ${h.name} · 今日打卡</h3>
@@ -999,7 +1016,7 @@ function openLogEditor(hid,preBookId,idx){
         </div></div>
       <div class="field"><label>今日内容 · 必填</label><input type="text" id="lTitle" placeholder="填写今天打卡的具体内容,如 训练部位 / 学习章节 / 练习主题" value="${editLog?(editLog.title||'').replace(/"/g,'&quot;'):''}"></div>
       <div class="field"><label>整体打分(5 星)· 必填</label><div class="stars" id="stars">${[1,2,3,4,5].map(i=>`<span class="s ${curStar>=i?'on':''}" data-v="${i}" onclick="setStar(${i})">★</span>`).join('')}</div></div>
-      <div class="field"><label>详细备注 · 必填</label><textarea id="lContent" style="min-height:100px" placeholder="今天的状态、细节、感受…">${editLog?(editLog.content||'').replace(/</g,'&lt;'):''}</textarea></div>
+      <div class="field"><label>详细备注 · 选填</label><textarea id="lContent" style="min-height:100px" placeholder="今天的状态、细节、感受…（选填）">${editLog?(editLog.content||'').replace(/</g,'&lt;'):''}</textarea></div>
       <div class="field"><label>上传图片(可多张,可编辑)</label><div class="att-row" id="attRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>照片<input type="file" accept="image/*" multiple onchange="readAtts(this)"></div></div></div>
       <button class="btn" onclick="saveLog('${hid}')">${editLog?'保存修改':'保存打卡'}</button>`);
     // 加减号/输入框改动时同步滑块
@@ -1018,6 +1035,7 @@ function onLogBookChange(hid){
   }
 }
 function stepDur(d){const el=document.getElementById('lDur');el.value=Math.max(0,(+el.value||0)+d);const r=document.getElementById('lDurRange');if(r)r.value=el.value;}
+function stepCnt(d){const el=document.getElementById('lCount');el.value=Math.max(0,(+el.value||0)+d);const m=document.getElementById('lCntMin');if(m)m.textContent=(+el.value||0)*10;}
 let curStar=0;function setStar(v){curStar=v;document.querySelectorAll('#stars .s').forEach(s=>s.classList.toggle('on',+s.dataset.v<=v));}
 function readCover(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{logCover=e.target.result;document.getElementById('coverPrev').innerHTML=`<img src="${logCover}">`;};r.readAsDataURL(f);}
 function readAtts(inp){[...inp.files].forEach(f=>{const r=new FileReader();r.onload=e=>{logAtts.push(e.target.result);renderAttRow();};r.readAsDataURL(f);});}
@@ -1025,8 +1043,21 @@ function renderAttRow(){const row=document.getElementById('attRow');if(!row)retu
 function saveLog(hid){
   const h=DB.habits.find(x=>x.id===hid);
   const isFlow=h.form==='flow';
+  const isCount=h.form==='count';
   const editLog=editLogIdx!==null?(DB.logs[hid]||[])[editLogIdx]:null;
   const dateStr=editLog?editLog.date:today();
+  if(isCount){
+    const cnt=Math.max(0,Math.floor(+document.getElementById('lCount').value||0));
+    if(!cnt){toast('请填写今日次数');return;}
+    const log={date:dateStr,count:cnt,duration:cnt*10,content:document.getElementById('lContent').value.trim(),rating:curStar,atts:logAtts.slice()};
+    const title=(document.getElementById('lTitle')||{}).value?document.getElementById('lTitle').value.trim():'';
+    if(title)log.title=title;
+    DB.logs[hid]=DB.logs[hid]||[];
+    if(editLog!==null&&editLogIdx!==null){DB.logs[hid][editLogIdx]=log;}
+    else{const ex=DB.logs[hid].findIndex(l=>l.date===dateStr);if(ex>=0)DB.logs[hid][ex]=log;else DB.logs[hid].push(log);}
+    editLogIdx=null;curStar=0;save();closeSheet(true);renderHabits();renderDashboard();toast('✓ 今日已点亮日历');
+    return;
+  }
   const log={date:dateStr,duration:+document.getElementById('lDur').value||0,content:document.getElementById('lContent').value.trim(),rating:curStar,atts:logAtts.slice()};
   if(isFlow){
     DB.books[hid]=DB.books[hid]||[];
@@ -1048,7 +1079,6 @@ function saveLog(hid){
     if(!log.duration){toast('请填写今日时长');return;}
     if(!title){toast('请填写今日内容');return;}
     if(!curStar){toast('请给出整体打分');return;}
-    if(!log.content){toast('请填写详细备注');return;}
     log.title=title;
   }
   DB.logs[hid]=DB.logs[hid]||[];
@@ -1086,12 +1116,17 @@ function openBookEditor(hid,bookId){
     <div class="field"><label>整体评分(5 分制)</label><div class="stars" id="bkStars">${[1,2,3,4,5].map(i=>`<span class="s ${b&&b.rating>=i?'on':''}" data-v="${i}" onclick="setBookStar(${i})">★</span>`).join('')}</div></div>
     <div class="field"><label>整体评价</label><textarea id="bkReview" placeholder="这份内容带给你的收获、感受…">${b?(b.review||'').replace(/</g,'&lt;'):''}</textarea></div>
     <div class="field"><label>封面</label><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>封面<input type="file" accept="image/*" onchange="readBookCover(this)"><span id="bkCoverPrev">${b&&b.cover?`<img src="${b.cover}">`:''}</span></div></div>
+    <div class="field"><label>附件图片(可多张 · 不作为首页封面展示)</label><div class="att-row" id="bkAttRow"><div class="upload" onclick="this.querySelector('input').click()"><span class="ic">＋</span>附件<input type="file" accept="image/*" multiple onchange="readBookAtts(this)"></div></div></div>
     <button class="btn" onclick="saveBook('${hid}','${bookId||''}')">${b?'保存':'添加'}</button>
     ${b&&!done?`<button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="setCurrentBook('${hid}','${bookId}')">设为「正在阅读」</button>`:''}
     ${b?`<button class="btn danger sm" style="width:100%;margin-top:10px" onclick="delBook('${hid}','${bookId}')">删除这本书</button>`:''}`);
   bookCover=b&&b.cover?b.cover:'';
+  bookAtts=b&&Array.isArray(b.atts)?b.atts.slice():[];
+  renderBookAttRow();
 }
-let bookCover='',bookStar=0;
+let bookCover='',bookStar=0,bookAtts=[];
+function renderBookAttRow(){const row=document.getElementById('bkAttRow');if(!row)return;row.querySelectorAll('.att-thumb').forEach(x=>x.remove());bookAtts.forEach((a,i)=>{const d=document.createElement('div');d.className='att-thumb';d.innerHTML=`<img src="${a}"><div class="del" onclick="bookAtts.splice(${i},1);renderBookAttRow()">✕</div>`;row.appendChild(d);});}
+function readBookAtts(inp){[...inp.files].forEach(f=>{const r=new FileReader();r.onload=e=>{bookAtts.push(e.target.result);renderBookAttRow();};r.readAsDataURL(f);});}
 function setBookStar(v){bookStar=v;document.querySelectorAll('#bkStars .s').forEach(s=>s.classList.toggle('on',+s.dataset.v<=v));}
 function setCurrentBook(hid,bookId){DB.currentBook=bookId;save();closeSheet(true);selectHabit(hid);toast('已设为正在阅读');}
 function readBookCover(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{bookCover=e.target.result;document.getElementById('bkCoverPrev').innerHTML=`<img src="${bookCover}">`;};r.readAsDataURL(f);}
@@ -1103,14 +1138,14 @@ function saveBook(hid,bookId){
   const minEl=document.getElementById('bkMin'),startEl=document.getElementById('bkStart');
   const totalMin=minEl?minEl.value.trim():'';const startDate=startEl?startEl.value:'';
   DB.books[hid]=DB.books[hid]||[];
-  if(bookId){const b=DB.books[hid].find(x=>x.id===bookId);if(b){b.title=t;b.author=a;b.finished=done;b.rating=bookStar;b.review=review;if(bookCover)b.cover=bookCover;delete b.progress;
+  if(bookId){const b=DB.books[hid].find(x=>x.id===bookId);if(b){b.title=t;b.author=a;b.finished=done;b.rating=bookStar;b.review=review;if(bookCover)b.cover=bookCover;b.atts=bookAtts.slice();delete b.progress;
       if(totalMin!=='')b.totalMin=Number(totalMin)||0;else delete b.totalMin;
       if(startDate)b.startDate=startDate;else delete b.startDate;}
     if(!done)DB.currentBook=bookId;                                       // 未读完 → 成为当前在读
     else if(DB.currentBook===bookId)DB.currentBook='';                    // 读完 → 让出当前位
   }
-  else{const nid=uid();DB.books[hid].push({id:nid,title:t,author:a,finished:done,rating:bookStar,review,cover:bookCover});if(!done)DB.currentBook=nid;}
-  bookCover='';bookStar=0;save();closeSheet(true);renderHabits();toast(bookId?'书籍已更新':'书籍已添加');
+  else{const nid=uid();DB.books[hid].push({id:nid,title:t,author:a,finished:done,rating:bookStar,review,cover:bookCover,atts:bookAtts.slice()});if(!done)DB.currentBook=nid;}
+  bookCover='';bookStar=0;bookAtts=[];save();closeSheet(true);renderHabits();toast(bookId?'书籍已更新':'书籍已添加');
 }
 function delBook(hid,bookId){
   if(!confirm('删除这本书?已有的打卡时长记录会保留,但不再关联书籍。'))return;
@@ -1233,7 +1268,7 @@ function saveDiary(idx){
    MANAGE / DELETE  (删除窗口)
    ============================================================ */
 function openManage(){
-  const rows=DB.habits.map((h,i)=>`<div class="manage-item"><div class="ico">${h.icon}</div><div class="nm">${h.name}<div class="form-tag">${h.form==='flow'?'图片信息流':'任务清单'}</div></div><button class="del" style="background:var(--bg-base);color:var(--accent);margin-right:6px" onclick="openHabitEditor('${h.id}')">编辑</button><button class="del" onclick="delHabit('${h.id}')">删除</button></div>`).join('');
+  const rows=DB.habits.map((h,i)=>`<div class="manage-item"><div class="ico">${h.icon}</div><div class="nm">${h.name}<div class="form-tag">${h.form==='flow'?'图片信息流':(h.form==='count'?'次数打卡':'任务清单')}</div></div><button class="del" style="background:var(--bg-base);color:var(--accent);margin-right:6px" onclick="openHabitEditor('${h.id}')">编辑</button><button class="del" onclick="delHabit('${h.id}')">删除</button></div>`).join('');
   openSheet(`<h3>管理 / 编辑 / 删除习惯</h3>
     ${DB.habits.length?rows:'<div class="empty" style="padding:20px"><p>暂无习惯模块</p></div>'}
     <button class="btn ghost" style="margin-top:12px" onclick="openHabitEditor()">＋ 新建习惯</button>
